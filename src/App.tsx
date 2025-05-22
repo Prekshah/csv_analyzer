@@ -27,8 +27,8 @@ import {
 } from '@mui/material';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend, Tooltip as RechartsTooltip,
-  LineChart, Line, ScatterChart, Scatter, PieChart, Pie, Cell,
-  ResponsiveContainer, ComposedChart, Area
+  ScatterChart, Scatter, PieChart, Pie, Cell,
+  ResponsiveContainer
 } from 'recharts';
 import Papa from 'papaparse';
 import { styled } from '@mui/material/styles';
@@ -103,13 +103,7 @@ interface ColumnStatistics {
   nullCount: number;
   missingCount: number;
   totalCount: number;
-  completeness: number; // percentage of non-null and non-missing values
-}
-
-interface CorrelationData {
-  source: string;
-  target: string;
-  value: number;
+  completeness: number;
 }
 
 interface BoxPlotData {
@@ -305,94 +299,6 @@ function identifyDependentMetrics(columns: string[]): string[] {
     );
   });
 }
-
-const DependencyMetricsDisplay = ({ dependencies }: { dependencies: DependencyMetric[] }) => (
-  <Box>
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-      <Typography variant="h6" sx={{ mt: 3 }} gutterBottom>
-        Column Dependencies Analysis
-      </Typography>
-      <Tooltip title="Shows relationships between columns based on correlation (for numeric data) and categorical association (for categorical data)">
-        <Box component="span" sx={{ cursor: 'help' }}>ℹ️</Box>
-      </Tooltip>
-    </Box>
-    
-    {dependencies.length === 0 ? (
-      <Paper sx={{ p: 2, mb: 3 }}>
-        <Typography color="text.secondary">
-          No significant dependencies found between columns. This could mean:
-          <ul>
-            <li>The columns are mostly independent</li>
-            <li>The relationships are weaker than our thresholds (correlation {'>'}0.5 or association {'>'}0.3)</li>
-            <li>There is insufficient data to determine relationships</li>
-          </ul>
-        </Typography>
-      </Paper>
-    ) : (
-      <TableContainer component={Paper} sx={{ mb: 3 }}>
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell>Related Columns</TableCell>
-              <TableCell>Relationship Type</TableCell>
-              <TableCell>Strength</TableCell>
-              <TableCell>Details</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {dependencies.map((dep, index) => (
-              <TableRow key={index}>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Typography>{`${dep.column1} ↔ ${dep.column2}`}</Typography>
-                    <Tooltip title="These columns show a significant relationship">
-                      <Box component="span" sx={{ cursor: 'help' }}>ℹ️</Box>
-                    </Tooltip>
-                  </Box>
-                </TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Typography>
-                      {dep.type === 'correlation' ? 'Correlation' : 'Categorical Association'}
-                    </Typography>
-                    <Tooltip title={
-                      dep.type === 'correlation' 
-                        ? "Pearson correlation coefficient - measures linear relationship between numeric columns"
-                        : "Cramer's V - measures association between categorical columns"
-                    }>
-                      <Box component="span" sx={{ cursor: 'help' }}>ℹ️</Box>
-                    </Tooltip>
-                  </Box>
-                </TableCell>
-                <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <LinearProgress 
-                      variant="determinate" 
-                      value={dep.strength * 100} 
-                      sx={{ 
-                        width: 100,
-                        height: 8,
-                        borderRadius: 4,
-                        backgroundColor: '#e0e0e0',
-                        '& .MuiLinearProgress-bar': {
-                          backgroundColor: dep.strength > 0.7 ? '#2e7d32' : dep.strength > 0.5 ? '#ed6c02' : '#1976d2'
-                        }
-                      }}
-                    />
-                    <Typography variant="body2">
-                      {(dep.strength * 100).toFixed(1)}%
-                    </Typography>
-                  </Box>
-                </TableCell>
-                <TableCell>{dep.description}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
-    )}
-  </Box>
-);
 
 function calculateQuartiles(data: number[]): { q1: number; median: number; q3: number } {
   const sorted = [...data].sort((a, b) => a - b);
@@ -660,20 +566,12 @@ function determineVisualizationType(stats: ColumnStatistics, columnName: string)
 
 // Update the BoxPlot component for better spacing
 function BoxPlot({ data, width, height }: { data: BoxPlotData; width: number; height: number }) {
-  // Increase padding to give more room for labels
-  const padding = { top: 60, right: 80, bottom: 80, left: 100 };
-  const plotWidth = width - padding.left - padding.right;
-  const plotHeight = height - padding.top - padding.bottom;
-  
-  // Calculate scale for better visualization
-  const range = data.max - data.min;
-  // Add a small buffer to prevent elements from touching the edges
-  const buffer = range * 0.05;
+  const plotWidth = width - 60;  // Adjust for margins
+
   const scale = (value: number) => {
-    return padding.left + (plotWidth * (value - (data.min - buffer))) / (range + 2 * buffer);
+    return 30 + (plotWidth * (value - (data.min - 0.05))) / (data.max - data.min + 0.1);
   };
 
-  // Format numbers for better readability
   const formatNumber = (num: number) => {
     if (Math.abs(num) >= 1000000) {
       return (num / 1000000).toFixed(1) + 'M';
@@ -683,16 +581,9 @@ function BoxPlot({ data, width, height }: { data: BoxPlotData; width: number; he
     return num.toFixed(1);
   };
 
-  // Calculate optimal number of ticks based on available width
-  const minTickSpacing = 120; // Minimum pixels between ticks
-  const numTicks = Math.min(7, Math.floor(plotWidth / minTickSpacing));
-  const tickValues = Array.from({ length: numTicks }, (_, i) => {
-    return data.min + (range * i) / (numTicks - 1);
-  });
-
-  // Calculate if we need to rotate labels based on text length
-  const maxLabelLength = Math.max(...tickValues.map(v => formatNumber(v).length));
-  const shouldRotateLabels = maxLabelLength > 5;
+  const checkOverlap = (pos1: number, pos2: number, minSpace: number) => {
+    return Math.abs(pos1 - pos2) < minSpace;
+  };
 
   // Calculate positions for staggered labels
   const keyPoints = [
@@ -703,16 +594,10 @@ function BoxPlot({ data, width, height }: { data: BoxPlotData; width: number; he
     { value: data.max, label: 'Max' }
   ];
 
-  // Function to check label overlap
-  const checkOverlap = (pos1: number, pos2: number, minSpace: number) => {
-    return Math.abs(pos1 - pos2) < minSpace;
-  };
-
   // Calculate label positions to avoid overlap
   const labelPositions = keyPoints.map((point, i) => {
     const basePos = scale(point.value);
     const prevPos = i > 0 ? scale(keyPoints[i - 1].value) : -Infinity;
-    const nextPos = i < keyPoints.length - 1 ? scale(keyPoints[i + 1].value) : Infinity;
     
     let yOffset = -45;
     if (i > 0 && checkOverlap(basePos, prevPos, 80)) {
@@ -726,7 +611,7 @@ function BoxPlot({ data, width, height }: { data: BoxPlotData; width: number; he
       {/* Title with more space */}
       <text
         x={width / 2}
-        y={padding.top / 2}
+        y={30}
         textAnchor="middle"
         fontSize="14"
         fontWeight="bold"
@@ -736,32 +621,31 @@ function BoxPlot({ data, width, height }: { data: BoxPlotData; width: number; he
 
       {/* X-axis with better spacing */}
       <line
-        x1={padding.left - 10}
-        y1={height - padding.bottom}
-        x2={width - padding.right + 10}
-        y2={height - padding.bottom}
+        x1={30}
+        y1={height - 40}
+        x2={width - 30}
+        y2={height - 40}
         stroke="#666"
         strokeWidth={1}
       />
 
       {/* X-axis ticks and labels with improved spacing */}
-      {tickValues.map((value, i) => (
+      {keyPoints.map((point, i) => (
         <g key={i}>
           <line
-            x1={scale(value)}
-            y1={height - padding.bottom}
-            x2={scale(value)}
-            y2={height - padding.bottom + 5}
+            x1={scale(point.value)}
+            y1={height - 40}
+            x2={scale(point.value)}
+            y2={height - 40 + 5}
             stroke="#666"
           />
           <text
-            x={scale(value)}
-            y={height - padding.bottom + (shouldRotateLabels ? 15 : 25)}
-            textAnchor={shouldRotateLabels ? "end" : "middle"}
+            x={scale(point.value)}
+            y={height - 40 + 25}
+            textAnchor="middle"
             fontSize="11"
-            transform={shouldRotateLabels ? `rotate(-45, ${scale(value)}, ${height - padding.bottom + 15})` : undefined}
           >
-            {formatNumber(value)}
+            {formatNumber(point.value)}
           </text>
         </g>
       ))}
@@ -904,7 +788,7 @@ function BoxPlot({ data, width, height }: { data: BoxPlotData; width: number; he
       </g>
 
       {/* Legend with improved spacing and alignment */}
-      <g transform={`translate(${padding.left}, ${padding.top / 2})`}>
+      <g transform={`translate(30, 30)`}>
         <g>
           <rect x="0" y="-8" width="12" height="12" fill="#8884d8" fillOpacity={0.3} stroke="#8884d8" />
           <text x="20" y="0" fontSize="11" dominantBaseline="middle">IQR Box</text>
@@ -1270,6 +1154,7 @@ function App() {
                 </TableBody>
               </Table>
             </TableContainer>
+            
           )}
         </>
       )}
