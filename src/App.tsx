@@ -98,6 +98,11 @@ interface ColumnStatistics {
   mode?: string | number;
   min?: number;
   max?: number;
+  standardDeviation?: number;
+  skewness?: number;
+  kurtosis?: number;
+  percentile25?: number;
+  percentile75?: number;
   uniqueValues?: number;
   frequencies?: Record<string, number>;
   nullCount: number;
@@ -155,11 +160,31 @@ function calculateStatistics(data: CSVValue[][], columnIndex: number): ColumnSta
   stats.completeness = (validValues.length / values.length) * 100;
   
   if (type === 'numeric') {
-    const numbers = validValues.map(Number);
-    stats.mean = numbers.reduce((a, b) => a + b, 0) / numbers.length;
-    stats.median = numbers.sort((a, b) => a - b)[Math.floor(numbers.length / 2)];
+    const numbers = validValues.map(Number).filter(n => !isNaN(n));
+    const n = numbers.length;
+    
+    // Basic statistics
+    stats.mean = numbers.reduce((a, b) => a + b, 0) / n;
+    const sortedNumbers = numbers.sort((a, b) => a - b);
+    stats.median = sortedNumbers[Math.floor(n / 2)];
     stats.min = Math.min(...numbers);
     stats.max = Math.max(...numbers);
+    
+    // Standard deviation
+    const variance = numbers.reduce((acc, val) => acc + Math.pow(val - stats.mean!, 2), 0) / n;
+    stats.standardDeviation = Math.sqrt(variance);
+    
+    // Skewness
+    const m3 = numbers.reduce((acc, val) => acc + Math.pow(val - stats.mean!, 3), 0) / n;
+    stats.skewness = m3 / Math.pow(stats.standardDeviation!, 3);
+    
+    // Kurtosis
+    const m4 = numbers.reduce((acc, val) => acc + Math.pow(val - stats.mean!, 4), 0) / n;
+    stats.kurtosis = (m4 / Math.pow(stats.standardDeviation!, 4)) - 3; // Excess kurtosis
+    
+    // Percentiles
+    stats.percentile25 = sortedNumbers[Math.floor(n * 0.25)];
+    stats.percentile75 = sortedNumbers[Math.floor(n * 0.75)];
   }
   
   // Calculate frequencies for all types
@@ -1231,11 +1256,69 @@ function App() {
                 <Typography>Unique Values: {stats.uniqueValues}</Typography>
                 {stats.type === 'numeric' && (
                   <>
-                    <Typography>Mean: {stats.mean?.toFixed(2)}</Typography>
-                    <Typography>Median: {stats.median?.toFixed(2)}</Typography>
-                    <Typography>Min: {stats.min}</Typography>
-                    <Typography>Max: {stats.max}</Typography>
-                    <Typography>Mode: {stats.mode}</Typography>
+                    <Typography variant="subtitle2" sx={{ mt: 1, mb: 0.5, color: 'primary.main' }}>
+                      Central Tendency:
+                      <Tooltip title="Measures of central location in the data">
+                        <IconButton size="small">
+                          <InfoIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Typography>
+                    <Box sx={{ pl: 2, mb: 2 }}>
+                      <Typography>Mean: <strong>{stats.mean?.toFixed(2)}</strong></Typography>
+                      <Typography>Median: <strong>{stats.median?.toFixed(2)}</strong></Typography>
+                      <Typography>Mode: <strong>{stats.mode}</strong></Typography>
+                    </Box>
+                    
+                    <Typography variant="subtitle2" sx={{ mt: 1, mb: 0.5, color: 'primary.main' }}>
+                      Range & Percentiles:
+                      <Tooltip title="Distribution boundaries and quartile values">
+                        <IconButton size="small">
+                          <InfoIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Typography>
+                    <Box sx={{ pl: 2, mb: 2 }}>
+                      <Typography>Minimum: <strong>{stats.min?.toFixed(2)}</strong></Typography>
+                      <Typography>Maximum: <strong>{stats.max?.toFixed(2)}</strong></Typography>
+                      <Typography>25th Percentile (Q1): <strong>{stats.percentile25?.toFixed(2)}</strong></Typography>
+                      <Typography>75th Percentile (Q3): <strong>{stats.percentile75?.toFixed(2)}</strong></Typography>
+                    </Box>
+                    
+                    <Typography variant="subtitle2" sx={{ mt: 1, mb: 0.5, color: 'primary.main' }}>
+                      Distribution Shape:
+                      <Tooltip title="Metrics describing the shape and spread of the distribution">
+                        <IconButton size="small">
+                          <InfoIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Typography>
+                    <Box sx={{ pl: 2 }}>
+                      <Typography>
+                        Standard Deviation: <strong>{stats.standardDeviation?.toFixed(2)}</strong>
+                        <Tooltip title="Measures the average deviation from the mean">
+                          <IconButton size="small">
+                            <InfoIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Typography>
+                      <Typography>
+                        Skewness: <strong>{stats.skewness?.toFixed(2)}</strong>
+                        <Tooltip title="Measures asymmetry of the distribution. Positive values indicate right skew, negative values indicate left skew">
+                          <IconButton size="small">
+                            <InfoIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Typography>
+                      <Typography>
+                        Kurtosis: <strong>{stats.kurtosis?.toFixed(2)}</strong>
+                        <Tooltip title="Measures the 'tailedness' of the distribution. Higher values indicate heavier tails">
+                          <IconButton size="small">
+                            <InfoIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Typography>
+                    </Box>
                   </>
                 )}
                 {stats.type === 'categorical' && (
