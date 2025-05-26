@@ -10,7 +10,6 @@ import {
   Grid,
   Alert,
   Tooltip,
-  IconButton,
   Table,
   TableBody,
   TableCell,
@@ -25,10 +24,7 @@ import {
   FormLabel,
   CircularProgress,
 } from '@mui/material';
-import InfoIcon from '@mui/icons-material/Info';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import ErrorIcon from '@mui/icons-material/Error';
-import WarningIcon from '@mui/icons-material/Warning';
 
 interface GroupSplittingProps {
   csvData: any;
@@ -292,7 +288,7 @@ const GroupSplitting: React.FC<GroupSplittingProps> = ({ csvData }) => {
       warnings,
       recommendations
     };
-  }, [csvData, statistics, isMetricContinuous, createBins, calculateMetricVariance]);
+  }, [csvData, statistics, isMetricContinuous, createBins, calculateMetricVariance, calculateStandardDeviation]);
 
   // Process columns in batches
   const columnAnalysis = useMemo(() => {

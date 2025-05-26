@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Box,
   FormControl,
@@ -134,7 +134,6 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
     }
     
     // Approximation of inverse error function
-    const a = 0.147;
     const y = Math.sqrt(-2 * Math.log(p));
     let x0 = -(2.30753 + 0.27061 * y) / (1 + 0.99229 * y + 0.04481 * y * y);
     
