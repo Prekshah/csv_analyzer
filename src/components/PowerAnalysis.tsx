@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Box,
   FormControl,
@@ -18,10 +18,12 @@ import {
   Radio,
   FormLabel,
   ButtonGroup,
+  Fade,
 } from '@mui/material';
 import InfoIcon from '@mui/icons-material/Info';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import { erf } from 'mathjs';
 
 interface PowerAnalysisProps {
@@ -39,6 +41,8 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
   const [numPaths, setNumPaths] = useState<'2' | '3'>('2');
   const [results, setResults] = useState<any>(null);
   const [error, setError] = useState<string>('');
+  
+  const resultsRef = useRef<HTMLDivElement>(null);
 
   // Common values for dropdowns
   const alphaOptions = [
@@ -157,6 +161,19 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
     setNumPaths('2');
     setResults(null);
     setError('');
+  };
+
+  const isFormValid = () => {
+    const effectiveMde = mde === 'custom' ? customMde : mde;
+    return Boolean(selectedMetric && alpha && beta && effectiveMde);
+  };
+
+  const handleRunAnalysis = () => {
+    calculateSampleSize();
+    // Scroll to results after a short delay to allow for state update
+    setTimeout(() => {
+      resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
   };
 
   return (
@@ -350,6 +367,22 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
         </Grid>
       </Paper>
 
+      {/* Run Analysis Button */}
+      <Fade in={isFormValid()}>
+        <Box sx={{ mb: 3, display: 'flex', justifyContent: 'center' }}>
+          <Button
+            variant="contained"
+            color="primary"
+            size="large"
+            startIcon={<PlayArrowIcon />}
+            onClick={handleRunAnalysis}
+            sx={{ minWidth: 200 }}
+          >
+            Run Analysis
+          </Button>
+        </Box>
+      </Fade>
+
       {/* Results */}
       {error && (
         <Alert severity="error" sx={{ mb: 3 }}>
@@ -358,51 +391,53 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
       )}
       
       {results && !error && (
-        <Paper sx={{ p: 3 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-            <Typography variant="h6">Results</Typography>
-            <Button
-              startIcon={<RefreshIcon />}
-              onClick={calculateSampleSize}
-              color="primary"
-              size="small"
-            >
-              Recalculate
-            </Button>
-          </Box>
-          <Grid container spacing={2}>
-            <Grid item xs={12}>
-              <Typography variant="body1">
-                Required Sample Size per Group: <strong>{results.sampleSizePerGroup.toLocaleString()}</strong>
-                <Tooltip title="Minimum number of samples needed in each test group">
-                  <IconButton size="small">
-                    <InfoIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              </Typography>
+        <Box ref={resultsRef}>
+          <Paper sx={{ p: 3 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6">Results</Typography>
+              <Button
+                startIcon={<RefreshIcon />}
+                onClick={calculateSampleSize}
+                color="primary"
+                size="small"
+              >
+                Recalculate
+              </Button>
+            </Box>
+            <Grid container spacing={2}>
+              <Grid item xs={12}>
+                <Typography variant="body1">
+                  Required Sample Size per Group: <strong>{results.sampleSizePerGroup.toLocaleString()}</strong>
+                  <Tooltip title="Minimum number of samples needed in each test group">
+                    <IconButton size="small">
+                      <InfoIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Typography>
+              </Grid>
+              <Grid item xs={12}>
+                <Typography variant="body1">
+                  Total Required Sample Size: <strong>{results.totalSampleSize.toLocaleString()}</strong>
+                  <Tooltip title="Total number of samples needed across all test groups">
+                    <IconButton size="small">
+                      <InfoIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Typography>
+              </Grid>
+              <Grid item xs={12}>
+                <Typography variant="body2" color="text.secondary">
+                  Absolute MDE: {results.absoluteMde.toFixed(4)}
+                </Typography>
+              </Grid>
+              <Grid item xs={12}>
+                <Typography variant="body2" color="text.secondary">
+                  Relative MDE: {results.relativeMde.toFixed(2)}%
+                </Typography>
+              </Grid>
             </Grid>
-            <Grid item xs={12}>
-              <Typography variant="body1">
-                Total Required Sample Size: <strong>{results.totalSampleSize.toLocaleString()}</strong>
-                <Tooltip title="Total number of samples needed across all test groups">
-                  <IconButton size="small">
-                    <InfoIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-              </Typography>
-            </Grid>
-            <Grid item xs={12}>
-              <Typography variant="body2" color="text.secondary">
-                Absolute MDE: {results.absoluteMde.toFixed(4)}
-              </Typography>
-            </Grid>
-            <Grid item xs={12}>
-              <Typography variant="body2" color="text.secondary">
-                Relative MDE: {results.relativeMde.toFixed(2)}%
-              </Typography>
-            </Grid>
-          </Grid>
-        </Paper>
+          </Paper>
+        </Box>
       )}
     </Box>
   );
