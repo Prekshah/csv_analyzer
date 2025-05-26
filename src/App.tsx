@@ -35,6 +35,8 @@ import { styled } from '@mui/material/styles';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
 import InfoIcon from '@mui/icons-material/Info';
+import PowerAnalysis from './components/PowerAnalysis';
+import GroupSplitting from './components/GroupSplitting';
 
 // Define colors for charts
 const COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#0088fe', '#00c49f', '#ffbb28', '#ff8042'];
@@ -1911,6 +1913,8 @@ function App() {
               <Tab label="Statistics" />
               <Tab label="Distributions" />
               <Tab label="Correlations" />
+              <Tab label="Power Analysis" />
+              <Tab label="Group Splitting" />
             </Tabs>
           </Box>
 
@@ -1919,6 +1923,8 @@ function App() {
             {activeTab === 1 && renderStatisticsTab()}
             {activeTab === 2 && renderDistributionsTab()}
             {activeTab === 3 && renderCorrelationsTab()}
+            {activeTab === 4 && <PowerAnalysis csvData={csvData} />}
+            {activeTab === 5 && <GroupSplitting csvData={csvData} />}
           </Box>
         </>
       )}
