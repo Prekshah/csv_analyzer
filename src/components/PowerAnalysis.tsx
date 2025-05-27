@@ -13,12 +13,13 @@ import {
   Alert,
   Tooltip,
   IconButton,
+  ButtonGroup,
+  Fade,
   RadioGroup,
   FormControlLabel,
   Radio,
   FormLabel,
-  ButtonGroup,
-  Fade,
+  Divider,
 } from '@mui/material';
 import InfoIcon from '@mui/icons-material/Info';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -38,7 +39,8 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
   const [customMde, setCustomMde] = useState<string>('');
   const [mdeType, setMdeType] = useState<'absolute' | 'percentage'>('percentage');
   const [testType, setTestType] = useState<'one-tailed' | 'two-tailed'>('two-tailed');
-  const [numPaths, setNumPaths] = useState<'2' | '3'>('2');
+  const [numPaths, setNumPaths] = useState<string>('2');
+  const [customPaths, setCustomPaths] = useState<string>('');
   const [results, setResults] = useState<any>(null);
   const [error, setError] = useState<string>('');
   
@@ -113,10 +115,9 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
         2 * variance * (zAlpha + zBeta) * (zAlpha + zBeta) / (absoluteMde * absoluteMde)
       );
 
-      // Adjust for multiple paths if needed
-      const totalSampleSize = numPaths === '2' 
-        ? sampleSizePerGroup * 2 
-        : sampleSizePerGroup * 3;
+      // Adjust for multiple paths
+      const effectiveNumPaths = numPaths === 'custom' ? parseInt(customPaths) || 2 : parseInt(numPaths);
+      const totalSampleSize = sampleSizePerGroup * effectiveNumPaths;
 
       setResults({
         sampleSizePerGroup,
@@ -159,6 +160,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
     setMdeType('percentage');
     setTestType('two-tailed');
     setNumPaths('2');
+    setCustomPaths('');
     setResults(null);
     setError('');
   };
@@ -249,6 +251,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
       {/* Test Parameters */}
       <Paper sx={{ p: 3, mb: 3 }}>
         <Grid container spacing={3}>
+          {/* Alpha and Beta in the first row */}
           <Grid item xs={12} sm={6}>
             <FormControl fullWidth>
               <InputLabel>Alpha (Significance Level)</InputLabel>
@@ -281,6 +284,8 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
               </Select>
             </FormControl>
           </Grid>
+
+          {/* MDE Selection and Number of Paths side by side */}
           <Grid item xs={12} sm={6}>
             <FormControl fullWidth>
               <InputLabel>Minimum Detectable Effect (MDE)</InputLabel>
@@ -309,17 +314,61 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
               />
             )}
           </Grid>
+
           <Grid item xs={12} sm={6}>
             <FormControl fullWidth>
-              <InputLabel>MDE Type</InputLabel>
+              <InputLabel>Number of Paths</InputLabel>
               <Select
+                value={numPaths}
+                onChange={(e) => {
+                  setNumPaths(e.target.value);
+                  if (e.target.value !== 'custom') {
+                    setCustomPaths('');
+                  }
+                }}
+                label="Number of Paths"
+              >
+                <MenuItem value="1">1-path (Control only)</MenuItem>
+                <MenuItem value="2">2-path (A/B)</MenuItem>
+                <MenuItem value="3">3-path (A/B/C)</MenuItem>
+                <MenuItem value="4">4-path (A/B/C/D)</MenuItem>
+                <MenuItem value="custom">Custom number of paths</MenuItem>
+              </Select>
+            </FormControl>
+            {numPaths === 'custom' && (
+              <TextField
+                fullWidth
+                label="Custom Number of Paths"
+                value={customPaths}
+                onChange={(e) => setCustomPaths(e.target.value)}
+                type="number"
+                inputProps={{ min: 1 }}
+                sx={{ mt: 2 }}
+                helperText="Enter the number of paths (e.g. 20)"
+              />
+            )}
+          </Grid>
+
+          {/* Radio button groups in the same row */}
+          <Grid item xs={12} sm={6}>
+            <FormControl>
+              <FormLabel>MDE Type</FormLabel>
+              <RadioGroup
+                row
                 value={mdeType}
                 onChange={(e) => setMdeType(e.target.value as 'absolute' | 'percentage')}
-                label="MDE Type"
               >
-                <MenuItem value="percentage">Percentage</MenuItem>
-                <MenuItem value="absolute">Absolute</MenuItem>
-              </Select>
+                <FormControlLabel 
+                  value="percentage" 
+                  control={<Radio />} 
+                  label="Percentage" 
+                />
+                <FormControlLabel 
+                  value="absolute" 
+                  control={<Radio />} 
+                  label="Absolute" 
+                />
+              </RadioGroup>
             </FormControl>
           </Grid>
           <Grid item xs={12} sm={6}>
@@ -339,27 +388,6 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                   value="one-tailed" 
                   control={<Radio />} 
                   label="One-tailed" 
-                />
-              </RadioGroup>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} sm={6}>
-            <FormControl>
-              <FormLabel>Number of Paths</FormLabel>
-              <RadioGroup
-                row
-                value={numPaths}
-                onChange={(e) => setNumPaths(e.target.value as '2' | '3')}
-              >
-                <FormControlLabel 
-                  value="2" 
-                  control={<Radio />} 
-                  label="2-path (A/B)" 
-                />
-                <FormControlLabel 
-                  value="3" 
-                  control={<Radio />} 
-                  label="3-path (A/B/C)" 
                 />
               </RadioGroup>
             </FormControl>
@@ -404,9 +432,11 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                 Recalculate
               </Button>
             </Box>
+
+            {/* Main Results */}
             <Grid container spacing={2}>
               <Grid item xs={12}>
-                <Typography variant="body1">
+                <Typography variant="body1" sx={{ mb: 1 }}>
                   Required Sample Size per Group: <strong>{results.sampleSizePerGroup.toLocaleString()}</strong>
                   <Tooltip title="Minimum number of samples needed in each test group">
                     <IconButton size="small">
@@ -416,7 +446,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                 </Typography>
               </Grid>
               <Grid item xs={12}>
-                <Typography variant="body1">
+                <Typography variant="body1" sx={{ mb: 1 }}>
                   Total Required Sample Size: <strong>{results.totalSampleSize.toLocaleString()}</strong>
                   <Tooltip title="Total number of samples needed across all test groups">
                     <IconButton size="small">
@@ -426,14 +456,99 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                 </Typography>
               </Grid>
               <Grid item xs={12}>
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                   Absolute MDE: {results.absoluteMde.toFixed(4)}
                 </Typography>
               </Grid>
               <Grid item xs={12}>
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                   Relative MDE: {results.relativeMde.toFixed(2)}%
                 </Typography>
+              </Grid>
+
+              {/* Formula Section */}
+              <Grid item xs={12}>
+                <Divider sx={{ mb: 3 }} />
+                <Typography variant="subtitle1" gutterBottom sx={{ mb: 2 }}>
+                  Power Analysis Calculation Details
+                  <Tooltip title="The formula and components used in this calculation">
+                    <IconButton size="small">
+                      <InfoIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Typography>
+
+                {/* Formula Box */}
+                <Box sx={{ 
+                  bgcolor: 'grey.50',
+                  p: 3,
+                  borderRadius: 1,
+                  fontFamily: 'monospace',
+                  fontSize: '0.9rem',
+                  lineHeight: '1.8'
+                }}>
+                  {/* Main Formula */}
+                  <Box sx={{ 
+                    mb: 3, 
+                    textAlign: 'center',
+                    fontSize: '1.1rem',
+                    fontWeight: 'bold'
+                  }}>
+                    n = 2σ² × (Zα + Zβ)² / δ²
+                  </Box>
+
+                  {/* Components */}
+                  <Typography variant="subtitle2" gutterBottom sx={{ mb: 2, fontWeight: 'bold' }}>
+                    Components:
+                  </Typography>
+
+                  <Box sx={{ pl: 2 }}>
+                    <Typography sx={{ mb: 1, fontFamily: 'inherit' }}>
+                      n  = {results.sampleSizePerGroup.toLocaleString()}
+                      <Box component="span" sx={{ color: 'text.secondary' }}> (required sample size per group)</Box>
+                    </Typography>
+
+                    <Typography sx={{ mb: 1, fontFamily: 'inherit' }}>
+                      σ  = {results.stdDev.toFixed(4)}
+                      <Box component="span" sx={{ color: 'text.secondary' }}> (standard deviation of the metric)</Box>
+                    </Typography>
+
+                    <Typography sx={{ mb: 1, fontFamily: 'inherit' }}>
+                      δ  = {results.absoluteMde.toFixed(4)}
+                      <Box component="span" sx={{ color: 'text.secondary' }}> (minimum detectable effect)</Box>
+                    </Typography>
+
+                    <Typography sx={{ mb: 1, fontFamily: 'inherit' }}>
+                      Zα = {testType === 'one-tailed' ? 
+                           (-1 * inversePhi(parseFloat(alpha))).toFixed(4) :
+                           (-1 * inversePhi(parseFloat(alpha) / 2)).toFixed(4)}
+                      <Box component="span" sx={{ color: 'text.secondary' }}> (Z-score for {alpha} significance level{testType === 'two-tailed' ? ' (two-tailed)' : ''})</Box>
+                    </Typography>
+
+                    <Typography sx={{ mb: 3, fontFamily: 'inherit' }}>
+                      Zβ = {(-1 * inversePhi(parseFloat(beta))).toFixed(4)}
+                      <Box component="span" sx={{ color: 'text.secondary' }}> (Z-score for {(1 - parseFloat(beta)).toFixed(2)} power level)</Box>
+                    </Typography>
+                  </Box>
+
+                  {/* Total Sample Size Calculation */}
+                  <Divider sx={{ mb: 2 }} />
+                  <Typography variant="subtitle2" gutterBottom sx={{ mb: 2, fontWeight: 'bold' }}>
+                    Total Sample Size:
+                  </Typography>
+                  <Box sx={{ pl: 2 }}>
+                    <Typography sx={{ fontFamily: 'inherit' }}>
+                      Total = n × {numPaths === 'custom' ? customPaths : numPaths} (number of groups)
+                    </Typography>
+                    <Typography sx={{ 
+                      fontFamily: 'inherit', 
+                      fontWeight: 'bold',
+                      mt: 1 
+                    }}>
+                      Total = {results.totalSampleSize.toLocaleString()} samples
+                    </Typography>
+                  </Box>
+                </Box>
               </Grid>
             </Grid>
           </Paper>
