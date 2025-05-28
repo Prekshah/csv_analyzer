@@ -1914,7 +1914,8 @@ function App() {
               <Tab label="Distributions" />
               <Tab label="Correlations" />
               <Tab label="Power Analysis" />
-              <Tab label="Group Splitting" />
+              {/* Temporarily hidden Group Splitting tab */}
+              {/* <Tab label="Group Splitting" /> */}
             </Tabs>
           </Box>
 
@@ -1924,7 +1925,8 @@ function App() {
             {activeTab === 2 && renderDistributionsTab()}
             {activeTab === 3 && renderCorrelationsTab()}
             {activeTab === 4 && <PowerAnalysis csvData={csvData} />}
-            {activeTab === 5 && <GroupSplitting csvData={csvData} />}
+            {/* Temporarily hidden Group Splitting rendering */}
+            {/* {activeTab === 5 && <GroupSplitting csvData={csvData} />} */}
           </Box>
         </>
       )}

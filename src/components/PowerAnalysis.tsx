@@ -11,6 +11,7 @@ import {
   Grid,
   Button,
   Alert,
+  AlertTitle,
   Tooltip,
   IconButton,
   ButtonGroup,
@@ -20,6 +21,7 @@ import {
   Radio,
   FormLabel,
   Divider,
+  FormHelperText,
 } from '@mui/material';
 import InfoIcon from '@mui/icons-material/Info';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -31,17 +33,57 @@ interface PowerAnalysisProps {
   csvData: any;
 }
 
+type TestType = 'one-tailed' | 'two-tailed';
+type AlphaValue = '0.01' | '0.05' | '0.1';
+type BetaValue = '0.05' | '0.1' | '0.2';
+
+interface CalculationResults {
+  sampleSizePerGroup: number;
+  totalSampleSize: number;
+  mean: number;
+  stdDev: number;
+  absoluteMde: number;
+  relativeMde: number;
+  zAlpha: number;
+  zBeta: number;
+  correctedAlpha: number;
+  numComparisons: number;
+  warnings?: string[];
+}
+
 const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
+  // Z-score lookup tables - temporarily commented out
+  /*
+  const zAlphaTable = {
+    'one-tailed': {
+      '0.1': 1.28,
+      '0.05': 1.64,
+      '0.01': 2.33
+    },
+    'two-tailed': {
+      '0.1': 1.64,
+      '0.05': 1.96,
+      '0.01': 2.58
+    }
+  } as const;
+
+  const zBetaTable = {
+    '0.2': 0.84,   // 80% power
+    '0.1': 1.28,   // 90% power
+    '0.05': 1.645  // 95% power
+  } as const;
+  */
+
   const [selectedMetric, setSelectedMetric] = useState<string>('');
-  const [alpha, setAlpha] = useState<string>('0.05');
-  const [beta, setBeta] = useState<string>('0.8');
+  const [alpha, setAlpha] = useState<AlphaValue>('0.05');
+  const [beta, setBeta] = useState<BetaValue>('0.2');
   const [mde, setMde] = useState<string>('5');
   const [customMde, setCustomMde] = useState<string>('');
   const [mdeType, setMdeType] = useState<'absolute' | 'percentage'>('percentage');
-  const [testType, setTestType] = useState<'one-tailed' | 'two-tailed'>('two-tailed');
+  const [testType, setTestType] = useState<TestType>('two-tailed');
   const [numPaths, setNumPaths] = useState<string>('2');
   const [customPaths, setCustomPaths] = useState<string>('');
-  const [results, setResults] = useState<any>(null);
+  const [results, setResults] = useState<CalculationResults | null>(null);
   const [error, setError] = useState<string>('');
   
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -54,9 +96,9 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
   ];
 
   const betaOptions = [
-    { value: '0.8', label: '80% (β = 0.8)' },
-    { value: '0.9', label: '90% (β = 0.9)' },
-    { value: '0.95', label: '95% (β = 0.95)' }
+    { value: '0.2', label: '80% Power (β = 0.2)' },
+    { value: '0.1', label: '90% Power (β = 0.1)' },
+    { value: '0.05', label: '95% Power (β = 0.05)' }
   ];
 
   const mdeOptions = [
@@ -81,9 +123,37 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
     return mde === 'custom' ? customMde : mde;
   };
 
+  // Helper function to calculate inverse of standard normal CDF (Z-score)
+  const inversePhi = (p: number): number => {
+    if (p <= 0 || p >= 1) {
+      throw new Error('Probability must be between 0 and 1');
+    }
+
+    // Rational approximation for inverse normal CDF
+    // Reference: Wichura, M.J. (1988)
+    if (p < 0.5) {
+      // F^-1(p) = - G^-1(p)
+      return -rationalApproximation(Math.sqrt(-2.0 * Math.log(p)));
+    } else {
+      // F^-1(p) = G^-1(1-p)
+      return rationalApproximation(Math.sqrt(-2.0 * Math.log(1 - p)));
+    }
+  };
+
+  // Helper function for rational approximation
+  const rationalApproximation = (t: number): number => {
+    // Coefficients from Wichura's algorithm
+    const c = [2.515517, 0.802853, 0.010328];
+    const d = [1.432788, 0.189269, 0.001308];
+    
+    return t - ((c[2]*t + c[1])*t + c[0]) / 
+             (((d[2]*t + d[1])*t + d[0])*t + 1.0);
+  };
+
   const calculateSampleSize = () => {
     try {
       setError('');
+      const warnings: string[] = [];
       const effectiveMde = getEffectiveMde();
       if (!selectedMetric || !alpha || !beta || !effectiveMde) {
         throw new Error('Please fill in all required fields');
@@ -100,24 +170,45 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
       // Convert percentage MDE to absolute if needed
       let absoluteMde = parseFloat(effectiveMde);
       if (mdeType === 'percentage') {
-        absoluteMde = (mean * parseFloat(effectiveMde)) / 100;
+        absoluteMde = (parseFloat(effectiveMde) / 100) * mean;
       }
 
-      // Calculate z-scores
+      // Calculate Z-scores
+      const alphaValue = parseFloat(alpha);
+      const betaValue = parseFloat(beta);
+      
+      // Get number of paths and calculate Bonferroni-corrected alpha
+      const effectiveNumPaths = numPaths === 'custom' ? parseInt(customPaths) || 2 : parseInt(numPaths);
+      // For k groups, we have k(k-1)/2 pairwise comparisons
+      const numComparisons = (effectiveNumPaths * (effectiveNumPaths - 1)) / 2;
+      const correctedAlpha = alphaValue / numComparisons;
+
+      // Add warning for large number of paths
+      if (numComparisons > 10) {
+        warnings.push(`Note: With ${effectiveNumPaths} paths, there are ${numComparisons} pairwise comparisons. ` +
+          `The Bonferroni-corrected significance level (${(correctedAlpha * 100).toFixed(4)}%) ` +
+          `is very conservative and may require a larger sample size than necessary.`);
+      }
+      
+      // Calculate Z-alpha based on test type and corrected alpha
       const zAlpha = testType === 'one-tailed' 
-        ? -1 * inversePhi(parseFloat(alpha))
-        : -1 * inversePhi(parseFloat(alpha) / 2);
-      const zBeta = -1 * inversePhi(parseFloat(beta));
+        ? inversePhi(1 - correctedAlpha)
+        : inversePhi(1 - correctedAlpha / 2);
+      
+      // Calculate Z-beta (power)
+      const zBeta = inversePhi(1 - betaValue);
 
       // Calculate sample size per group
       const variance = stdDev * stdDev;
       let sampleSizePerGroup = Math.ceil(
-        2 * variance * (zAlpha + zBeta) * (zAlpha + zBeta) / (absoluteMde * absoluteMde)
+        2 * Math.pow(zAlpha + zBeta, 2) * variance / Math.pow(absoluteMde, 2)
       );
 
-      // Adjust for multiple paths
-      const effectiveNumPaths = numPaths === 'custom' ? parseInt(customPaths) || 2 : parseInt(numPaths);
+      // Calculate total sample size
       const totalSampleSize = sampleSizePerGroup * effectiveNumPaths;
+
+      // Calculate relative MDE as percentage of mean
+      const relativeMde = (absoluteMde / mean) * 100;
 
       setResults({
         sampleSizePerGroup,
@@ -125,36 +216,22 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
         mean,
         stdDev,
         absoluteMde,
-        relativeMde: (absoluteMde / mean) * 100,
+        relativeMde,
+        zAlpha,
+        zBeta,
+        correctedAlpha,
+        numComparisons,
+        warnings
       });
     } catch (err: any) {
       setError(err.message);
     }
   };
 
-  // Helper function to calculate inverse of standard normal CDF
-  const inversePhi = (p: number): number => {
-    if (p <= 0 || p >= 1) {
-      throw new Error('Probability must be between 0 and 1');
-    }
-    
-    // Approximation of inverse error function
-    const y = Math.sqrt(-2 * Math.log(p));
-    let x0 = -(2.30753 + 0.27061 * y) / (1 + 0.99229 * y + 0.04481 * y * y);
-    
-    for (let i = 0; i < 2; i++) {
-      const err = erf(x0 / Math.sqrt(2)) - (1 - 2 * p);
-      const dx = err * Math.sqrt(2 * Math.PI) * Math.exp(x0 * x0 / 2);
-      x0 -= dx / (1 + x0 * dx);
-    }
-    
-    return x0;
-  };
-
   const handleReset = () => {
     setSelectedMetric('');
     setAlpha('0.05');
-    setBeta('0.8');
+    setBeta('0.2');
     setMde('5');
     setCustomMde('');
     setMdeType('percentage');
@@ -216,7 +293,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                 onChange={(e) => setSelectedMetric(e.target.value)}
                 label="Primary Metric"
               >
-                {csvData?.columns.map((column: string) => (
+                {csvData?.columns?.map((column: string) => (
                   <MenuItem key={column} value={column}>
                     {column}
                   </MenuItem>
@@ -257,7 +334,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
               <InputLabel>Alpha (Significance Level)</InputLabel>
               <Select
                 value={alpha}
-                onChange={(e) => setAlpha(e.target.value)}
+                onChange={(e) => setAlpha(e.target.value as AlphaValue)}
                 label="Alpha (Significance Level)"
               >
                 {alphaOptions.map(option => (
@@ -270,11 +347,11 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
           </Grid>
           <Grid item xs={12} sm={6}>
             <FormControl fullWidth>
-              <InputLabel>Beta (Statistical Power)</InputLabel>
+              <InputLabel>Statistical Power (1-β)</InputLabel>
               <Select
                 value={beta}
-                onChange={(e) => setBeta(e.target.value)}
-                label="Beta (Statistical Power)"
+                onChange={(e) => setBeta(e.target.value as BetaValue)}
+                label="Statistical Power (1-β)"
               >
                 {betaOptions.map(option => (
                   <MenuItem key={option.value} value={option.value}>
@@ -421,6 +498,13 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
       {results && !error && (
         <Box ref={resultsRef}>
           <Paper sx={{ p: 3 }}>
+            {results.warnings && results.warnings.length > 0 && (
+              <Alert severity="warning" sx={{ mb: 3 }}>
+                {results.warnings.map((warning: string, index: number) => (
+                  <div key={index}>{warning}</div>
+                ))}
+              </Alert>
+            )}
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
               <Typography variant="h6">Results</Typography>
               <Button
@@ -458,6 +542,11 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
               <Grid item xs={12}>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                   Absolute MDE: {results.absoluteMde.toFixed(4)}
+                  <Tooltip title="The MDE must have the same unit as your metric's standard deviation for the sample size calculation">
+                    <IconButton size="small">
+                      <InfoIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
                 </Typography>
               </Grid>
               <Grid item xs={12}>
@@ -492,9 +581,46 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                     mb: 3, 
                     textAlign: 'center',
                     fontSize: '1.1rem',
-                    fontWeight: 'bold'
+                    fontWeight: 'bold',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 1
                   }}>
-                    n = 2σ² × (Zα + Zβ)² / δ²
+                    <Box component="span" sx={{ 
+                      display: 'flex',
+                      alignItems: 'center',
+                      height: '100%',
+                      pb: '0.5rem'
+                    }}>
+                      n =
+                    </Box>
+                    <Box sx={{ 
+                      display: 'inline-flex', 
+                      flexDirection: 'column', 
+                      alignItems: 'center'
+                    }}>
+                      <Box className="numerator" sx={{
+                        whiteSpace: 'nowrap',
+                        minWidth: '240px',
+                        textAlign: 'center'
+                      }}>
+                        2σ² × (Z<sub>{testType === 'one-tailed' ? '1-α' : '1-α/2'}</sub> + Z<sub>1-β</sub>)²
+                      </Box>
+                      <Box className="fraction-line" sx={{ 
+                        width: '100%',
+                        height: '2px',
+                        backgroundColor: 'text.primary',
+                        my: 0.5
+                      }} />
+                      <Box className="denominator" sx={{
+                        whiteSpace: 'nowrap',
+                        minWidth: '240px',
+                        textAlign: 'center'
+                      }}>
+                        δ²
+                      </Box>
+                    </Box>
                   </Box>
 
                   {/* Components */}
@@ -510,24 +636,30 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
 
                     <Typography sx={{ mb: 1, fontFamily: 'inherit' }}>
                       σ  = {results.stdDev.toFixed(4)}
-                      <Box component="span" sx={{ color: 'text.secondary' }}> (standard deviation of the metric)</Box>
+                      <Box component="span" sx={{ color: 'text.secondary' }}> (standard deviation in 
+                        <Box component="span" sx={{ fontWeight: 600, color: 'text.primary', opacity: 0.9 }}> {selectedMetric} units</Box>)
+                      </Box>
                     </Typography>
 
                     <Typography sx={{ mb: 1, fontFamily: 'inherit' }}>
                       δ  = {results.absoluteMde.toFixed(4)}
-                      <Box component="span" sx={{ color: 'text.secondary' }}> (minimum detectable effect)</Box>
+                      <Box component="span" sx={{ color: 'text.secondary' }}> (minimum detectable effect in 
+                        <Box component="span" sx={{ fontWeight: 600, color: 'text.primary', opacity: 0.9 }}> {selectedMetric} units</Box>)
+                      </Box>
                     </Typography>
 
                     <Typography sx={{ mb: 1, fontFamily: 'inherit' }}>
-                      Zα = {testType === 'one-tailed' ? 
-                           (-1 * inversePhi(parseFloat(alpha))).toFixed(4) :
-                           (-1 * inversePhi(parseFloat(alpha) / 2)).toFixed(4)}
-                      <Box component="span" sx={{ color: 'text.secondary' }}> (Z-score for {alpha} significance level{testType === 'two-tailed' ? ' (two-tailed)' : ''})</Box>
+                      Z<sub>{testType === 'one-tailed' ? '1-α' : '1-α/2'}</sub> = {results.zAlpha.toFixed(4)}
+                      <Box component="span" sx={{ color: 'text.secondary' }}> 
+                        (Z-score for {(results.correctedAlpha * 100).toFixed(3)}% significance level
+                        {testType === 'two-tailed' ? ' (two-tailed)' : ''}, 
+                        Bonferroni-corrected for {results.numComparisons} comparisons)
+                      </Box>
                     </Typography>
 
                     <Typography sx={{ mb: 3, fontFamily: 'inherit' }}>
-                      Zβ = {(-1 * inversePhi(parseFloat(beta))).toFixed(4)}
-                      <Box component="span" sx={{ color: 'text.secondary' }}> (Z-score for {(1 - parseFloat(beta)).toFixed(2)} power level)</Box>
+                      Z<sub>1-β</sub> = {results.zBeta.toFixed(4)}
+                      <Box component="span" sx={{ color: 'text.secondary' }}> (Z-score for {((1 - parseFloat(beta)) * 100).toFixed(0)}% power level)</Box>
                     </Typography>
                   </Box>
 
