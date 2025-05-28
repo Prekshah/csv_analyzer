@@ -36,7 +36,8 @@ import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
 import InfoIcon from '@mui/icons-material/Info';
 import PowerAnalysis from './components/PowerAnalysis';
-import GroupSplitting from './components/GroupSplitting';
+/* Temporarily commented out */
+// import GroupSplitting from './components/GroupSplitting';
 
 // Define colors for charts
 const COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#0088fe', '#00c49f', '#ffbb28', '#ff8042'];

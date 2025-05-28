@@ -11,7 +11,6 @@ import {
   Grid,
   Button,
   Alert,
-  AlertTitle,
   Tooltip,
   IconButton,
   ButtonGroup,
@@ -21,13 +20,11 @@ import {
   Radio,
   FormLabel,
   Divider,
-  FormHelperText,
 } from '@mui/material';
 import InfoIcon from '@mui/icons-material/Info';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
-import { erf } from 'mathjs';
 
 interface PowerAnalysisProps {
   csvData: any;
