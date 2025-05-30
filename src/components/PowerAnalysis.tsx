@@ -33,6 +33,7 @@ import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import ArrowDownward from '@mui/icons-material/ArrowDownward';
 import ArrowUpward from '@mui/icons-material/ArrowUpward';
+import CheckCircle from '@mui/icons-material/CheckCircle';
 
 interface PowerAnalysisProps {
   csvData: any;
@@ -573,6 +574,25 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
             </IconButton>
           </Tooltip>
         </Typography>
+
+        {/* Quick Actions */}
+        <Box sx={{ mb: 2 }}>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => {
+              const numGroups = allocationRatios.length;
+              const equalRatio = (100 / numGroups).toFixed(2);
+              setAllocationRatios(allocationRatios.map(ratio => ({
+                ...ratio,
+                ratio: equalRatio
+              })));
+            }}
+            sx={{ mr: 1 }}
+          >
+            Equal Split
+          </Button>
+        </Box>
         
         {/* Scrollable container for many variants */}
         <Box sx={{ 
@@ -594,63 +614,90 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
             background: '#555',
           },
         }}>
-          <Grid container spacing={2}>
+          <Grid container spacing={3}>
             {allocationRatios.map((ratio, index) => (
               <Grid item xs={12} sm={6} md={4} key={ratio.name}>
-                <TextField
-                  fullWidth
-                  label={ratio.name}
-                  value={ratio.ratio}
-                  onChange={(e) => handleAllocationRatioChange(index, e.target.value)}
-                  type="number"
-                  inputProps={{ 
-                    step: '0.01',
-                    min: '0',
-                    max: '100'
-                  }}
-                  sx={{
-                    mt: 3,
-                    '& .MuiInputLabel-root': {
-                      background: '#fff',
-                      padding: '0 4px',
-                    },
-                    '& .MuiInputLabel-shrink': {
-                      transform: 'translate(14px, -12px) scale(0.75)',
-                    },
-                    '& .MuiOutlinedInput-root': {
-                      '& fieldset': {
-                        top: 0,
-                      },
-                      '& input': {
-                        textAlign: 'left',
-                        paddingLeft: '14px'
+                <Box sx={{ mt: 2, mb: 1 }}>
+                  <TextField
+                    fullWidth
+                    label={ratio.name}
+                    value={ratio.ratio}
+                    onChange={(e) => {
+                      let value = e.target.value;
+                      if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                        if (value.includes('.') && value.split('.')[1].length > 2) {
+                          return;
+                        }
+                        handleAllocationRatioChange(index, value);
                       }
-                    }
-                  }}
-                  helperText={`${ratio.name} allocation (%)`}
-                  error={parseFloat(ratio.ratio) < 0 || parseFloat(ratio.ratio) > 100}
-                  variant="outlined"
-                />
+                    }}
+                    onBlur={(e) => {
+                      const value = parseFloat(e.target.value || '0');
+                      handleAllocationRatioChange(index, value.toFixed(2));
+                    }}
+                    type="text"
+                    inputProps={{ 
+                      inputMode: 'decimal',
+                      pattern: '[0-9]*[.]?[0-9]*'
+                    }}
+                    sx={{
+                      '& .MuiInputLabel-root': {
+                        background: '#fff',
+                        padding: '0 4px',
+                        top: '-8px',
+                      },
+                      '& .MuiInputLabel-shrink': {
+                        transform: 'translate(14px, -6px) scale(0.75)',
+                        backgroundColor: '#fff',
+                        padding: '0 8px',
+                      },
+                      '& .MuiOutlinedInput-root': {
+                        marginTop: '12px',
+                        '& fieldset': {
+                          top: 0,
+                        },
+                        '& input': {
+                          textAlign: 'left',
+                          paddingLeft: '14px',
+                          height: '1.4375em',
+                        }
+                      }
+                    }}
+                    error={parseFloat(ratio.ratio) < 0 || parseFloat(ratio.ratio) > 100}
+                    helperText={`${ratio.name} allocation (%)`}
+                    variant="outlined"
+                  />
+                </Box>
               </Grid>
             ))}
           </Grid>
         </Box>
 
-        {/* Running Total */}
+        {/* Running Total with better feedback */}
         <Box sx={{ 
           mt: 2, 
+          p: 2,
+          bgcolor: 'background.default',
+          borderRadius: 1,
           display: 'flex', 
           alignItems: 'center',
-          gap: 1
+          justifyContent: 'space-between',
+          gap: 2
         }}>
           <Typography 
             variant="body1" 
             sx={{ 
               color: Math.abs(getAllocationTotal() - 100) < 0.000001 ? '#2e7d32' : '#d32f2f',
-              fontWeight: 'bold'
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1
             }}
           >
-            Total: {getAllocationTotal().toFixed(6)}%
+            Total: {getAllocationTotal().toFixed(2)}%
+            {Math.abs(getAllocationTotal() - 100) < 0.000001 && (
+              <CheckCircle sx={{ color: '#2e7d32', fontSize: 20 }} />
+            )}
           </Typography>
           {Math.abs(getAllocationTotal() - 100) >= 0.000001 && (
             <Typography 
@@ -662,7 +709,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                 gap: 0.5
               }}
             >
-              <span>Must sum to 100%</span>
+              Must sum to 100%
             </Typography>
           )}
         </Box>
