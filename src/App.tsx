@@ -460,75 +460,163 @@ function prepareCorrelationMatrix(
 // Add new component for correlation heatmap
 function CorrelationHeatmap({ data, width, height }: { data: HeatmapCell[], width: number, height: number }) {
   const uniqueColumns = Array.from(new Set(data.map(d => d.x)));
-  const cellSize = Math.min(width, height) / (uniqueColumns.length + 1);
   
-  // Color scale function
+  // Calculate max label length and adjust margins accordingly
+  const maxLabelLength = Math.max(...uniqueColumns.map(col => col.length));
+  const margin = {
+    top: Math.max(150, maxLabelLength * 7), // Increased top margin for vertical labels
+    right: Math.max(60, maxLabelLength * 3),
+    bottom: Math.max(60, maxLabelLength * 3),
+    left: Math.max(120, maxLabelLength * 6)
+  };
+
+  const availableWidth = width - margin.left - margin.right;
+  const availableHeight = height - margin.top - margin.bottom;
+  
+  // Calculate cell size based on available space and number of columns
+  const cellSize = Math.min(
+    (availableWidth / uniqueColumns.length) * 0.95,
+    (availableHeight / uniqueColumns.length) * 0.95
+  );
+
+  // Calculate font size based on cell size
+  const fontSize = Math.min(12, Math.max(8, cellSize * 0.4));
+  
+  // Enhanced color scale function with better contrast
   const getColor = (value: number): string => {
-    if (value === 1) return '#8884d8';
-    if (value > 0) return `rgba(76, 175, 80, ${Math.abs(value)})`;
-    return `rgba(244, 67, 54, ${Math.abs(value)})`;
+    if (value === 1) return '#6a51a3'; // Darker purple for diagonal
+    if (value > 0) return `rgba(76, 175, 80, ${Math.min(0.9, Math.abs(value) + 0.2)})`;
+    return `rgba(244, 67, 54, ${Math.min(0.9, Math.abs(value) + 0.2)})`;
+  };
+
+  // Calculate label positioning - now vertical
+  const labelOffset = maxLabelLength * 5; // Increased for vertical text
+
+  // Helper function to format correlation value
+  const formatCorrelation = (value: number): string => {
+    const percentage = (value * 100).toFixed(1);
+    const direction = value > 0 ? 'positive' : 'negative';
+    return `${Math.abs(value).toFixed(2)} (${percentage}% ${direction})`;
   };
 
   return (
-    <svg width={width} height={height}>
-      <g transform={`translate(${cellSize}, ${cellSize})`}>
-        {/* Column labels */}
-        {uniqueColumns.map((col, i) => (
-          <text
-            key={`col-${i}`}
-            x={i * cellSize + cellSize / 2}
-            y={-10}
-            textAnchor="end"
-            transform={`rotate(-45, ${i * cellSize + cellSize / 2}, -10)`}
-            fontSize={12}
-          >
-            {col}
-          </text>
-        ))}
-        
-        {/* Row labels */}
-        {uniqueColumns.map((col, i) => (
-          <text
-            key={`row-${i}`}
-            x={-10}
-            y={i * cellSize + cellSize / 2}
-            textAnchor="end"
-            alignmentBaseline="middle"
-            fontSize={12}
-          >
-            {col}
-          </text>
-        ))}
-        
-        {/* Heatmap cells */}
-        {data.map((d, i) => {
-          const x = uniqueColumns.indexOf(d.x) * cellSize;
-          const y = uniqueColumns.indexOf(d.y) * cellSize;
-          return (
-            <g key={i}>
-              <rect
-                x={x}
-                y={y}
-                width={cellSize}
-                height={cellSize}
-                fill={getColor(d.value)}
-                stroke="#fff"
-              />
+    <div style={{ 
+      width: width, 
+      height: height, 
+      overflow: 'auto',
+      position: 'relative',
+      padding: '20px'
+    }}>
+      <svg width={width} height={height}>
+        <defs>
+          <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="1" stdDeviation="2" floodOpacity="0.1"/>
+          </filter>
+        </defs>
+        <g transform={`translate(${margin.left}, ${margin.top})`}>
+          {/* Column labels - now vertical */}
+          {uniqueColumns.map((col, i) => (
+            <g key={`col-${i}`}>
               <text
-                x={x + cellSize / 2}
-                y={y + cellSize / 2}
-                textAnchor="middle"
-                alignmentBaseline="middle"
-                fontSize={10}
-                fill={Math.abs(d.value) > 0.5 ? '#fff' : '#000'}
+                x={i * cellSize + cellSize / 2}
+                y={-10} // Reduced distance from heatmap
+                textAnchor="start"
+                transform={`rotate(-90, ${i * cellSize + cellSize / 2}, -10)`}
+                fontSize={fontSize}
+                style={{ 
+                  fontFamily: 'Arial', 
+                  fontWeight: 500
+                }}
+                filter="url(#shadow)"
               >
-                {d.value.toFixed(2)}
+                {col}
               </text>
+              {/* Add subtle connecting line */}
+              <line
+                x1={i * cellSize + cellSize / 2}
+                y1={-8}
+                x2={i * cellSize + cellSize / 2}
+                y2={-2}
+                stroke="#666"
+                strokeWidth="0.5"
+                strokeDasharray="2,2"
+              />
             </g>
-          );
-        })}
-      </g>
-    </svg>
+          ))}
+          
+          {/* Row labels */}
+          {uniqueColumns.map((col, i) => (
+            <g key={`row-${i}`}>
+              <text
+                x={-20}
+                y={i * cellSize + cellSize / 2}
+                textAnchor="end"
+                alignmentBaseline="middle"
+                fontSize={fontSize}
+                style={{ 
+                  fontFamily: 'Arial', 
+                  fontWeight: 500
+                }}
+                filter="url(#shadow)"
+              >
+                {col}
+              </text>
+              {/* Add subtle connecting line */}
+              <line
+                x1={-18}
+                y1={i * cellSize + cellSize / 2}
+                x2={-2}
+                y2={i * cellSize + cellSize / 2}
+                stroke="#666"
+                strokeWidth="0.5"
+                strokeDasharray="2,2"
+              />
+            </g>
+          ))}
+          
+          {/* Heatmap cells */}
+          {data.map((d, i) => {
+            const x = uniqueColumns.indexOf(d.x) * cellSize;
+            const y = uniqueColumns.indexOf(d.y) * cellSize;
+            const cellPadding = cellSize * 0.05;
+
+            return (
+              <g key={i}>
+                <rect
+                  x={x + cellPadding}
+                  y={y + cellPadding}
+                  width={cellSize - 2 * cellPadding}
+                  height={cellSize - 2 * cellPadding}
+                  fill={getColor(d.value)}
+                  stroke="#fff"
+                  strokeWidth={1}
+                  rx={2}
+                >
+                  <title>
+                    {`${d.x} → ${d.y}: ${formatCorrelation(d.value)}`}
+                  </title>
+                </rect>
+                <text
+                  x={x + cellSize / 2}
+                  y={y + cellSize / 2}
+                  textAnchor="middle"
+                  alignmentBaseline="middle"
+                  fontSize={Math.min(11, cellSize * 0.35)}
+                  fill={Math.abs(d.value) > 0.5 ? '#fff' : '#000'}
+                  style={{ 
+                    fontFamily: 'Arial',
+                    fontWeight: Math.abs(d.value) > 0.7 ? 'bold' : 'normal',
+                    pointerEvents: 'none'
+                  }}
+                >
+                  {d.value.toFixed(2)}
+                </text>
+              </g>
+            );
+          })}
+        </g>
+      </svg>
+    </div>
   );
 }
 
@@ -1707,8 +1795,14 @@ function App() {
               </IconButton>
             </Tooltip>
           </Typography>
-          <Box sx={{ height: 500, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <CorrelationHeatmap data={correlationResults.heatmap} width={600} height={400} />
+          <Box sx={{ 
+            height: 600, 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            overflow: 'auto'
+          }}>
+            <CorrelationHeatmap data={correlationResults.heatmap} width={800} height={600} />
           </Box>
         </Paper>
 

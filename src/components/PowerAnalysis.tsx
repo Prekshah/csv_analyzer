@@ -13,13 +13,13 @@ import {
   Alert,
   Tooltip,
   IconButton,
-  ButtonGroup,
   Fade,
   RadioGroup,
   FormControlLabel,
   Radio,
   FormLabel,
   Divider,
+  ButtonGroup,
 } from '@mui/material';
 import InfoIcon from '@mui/icons-material/Info';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -34,6 +34,11 @@ type TestType = 'one-tailed' | 'two-tailed';
 type AlphaValue = '0.01' | '0.05' | '0.1';
 type BetaValue = '0.05' | '0.1' | '0.2';
 
+interface AllocationRatio {
+  name: string;
+  ratio: string;
+}
+
 interface CalculationResults {
   sampleSizePerGroup: number;
   totalSampleSize: number;
@@ -45,32 +50,12 @@ interface CalculationResults {
   zBeta: number;
   correctedAlpha: number;
   numComparisons: number;
+  allocationEfficiencyFactor: number;
+  adjustedSampleSizes: { [key: string]: number };
   warnings?: string[];
 }
 
 const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
-  // Z-score lookup tables - temporarily commented out
-  /*
-  const zAlphaTable = {
-    'one-tailed': {
-      '0.1': 1.28,
-      '0.05': 1.64,
-      '0.01': 2.33
-    },
-    'two-tailed': {
-      '0.1': 1.64,
-      '0.05': 1.96,
-      '0.01': 2.58
-    }
-  } as const;
-
-  const zBetaTable = {
-    '0.2': 0.84,   // 80% power
-    '0.1': 1.28,   // 90% power
-    '0.05': 1.645  // 95% power
-  } as const;
-  */
-
   const [selectedMetric, setSelectedMetric] = useState<string>('');
   const [alpha, setAlpha] = useState<AlphaValue>('0.05');
   const [beta, setBeta] = useState<BetaValue>('0.2');
@@ -82,6 +67,10 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
   const [customPaths, setCustomPaths] = useState<string>('');
   const [results, setResults] = useState<CalculationResults | null>(null);
   const [error, setError] = useState<string>('');
+  const [allocationRatios, setAllocationRatios] = useState<AllocationRatio[]>([
+    { name: 'Control', ratio: '50' },
+    { name: 'Variant A', ratio: '50' }
+  ]);
   
   const resultsRef = useRef<HTMLDivElement>(null);
 
@@ -147,6 +136,81 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
              (((d[2]*t + d[1])*t + d[0])*t + 1.0);
   };
 
+  const handleNumPathsChange = (value: string) => {
+    setNumPaths(value);
+    if (value !== 'custom') {
+      setCustomPaths('');
+      // Update allocation ratios based on number of paths
+      const numGroups = parseInt(value);
+      const baseRatio = Math.floor((100 / numGroups) * 100) / 100; // Round down to 2 decimals
+      const newRatios: AllocationRatio[] = [];
+      
+      // First calculate the total with rounded down values
+      const totalWithBase = baseRatio * numGroups;
+      const remaining = +(100 - totalWithBase).toFixed(2);
+      
+      for (let i = 0; i < numGroups; i++) {
+        let ratio: number;
+        if (i === 1) { // Variant A always gets the remaining amount
+          ratio = +(baseRatio + remaining).toFixed(2);
+        } else {
+          ratio = baseRatio;
+        }
+        
+        newRatios.push({
+          name: i === 0 ? 'Control' : `Variant ${String.fromCharCode(65 + i - 1)}`,
+          ratio: ratio.toFixed(2)
+        });
+      }
+      setAllocationRatios(newRatios);
+    }
+  };
+
+  const handleCustomPathsChange = (value: string) => {
+    setCustomPaths(value);
+    const numGroups = parseInt(value) || 2;
+    if (numGroups > 0) {
+      const baseRatio = Math.floor((100 / numGroups) * 100) / 100; // Round down to 2 decimals
+      const newRatios: AllocationRatio[] = [];
+      
+      // First calculate the total with rounded down values
+      const totalWithBase = baseRatio * numGroups;
+      const remaining = +(100 - totalWithBase).toFixed(2);
+      
+      for (let i = 0; i < numGroups; i++) {
+        let ratio: number;
+        if (i === 1) { // Variant A always gets the remaining amount
+          ratio = +(baseRatio + remaining).toFixed(2);
+        } else {
+          ratio = baseRatio;
+        }
+        
+        newRatios.push({
+          name: i === 0 ? 'Control' : `Variant ${String.fromCharCode(65 + Math.min(i - 1, 25))}${i > 26 ? (i-25) : ''}`,
+          ratio: ratio.toFixed(2)
+        });
+      }
+      setAllocationRatios(newRatios);
+    }
+  };
+
+  const handleAllocationRatioChange = (index: number, value: string) => {
+    const newRatios = [...allocationRatios];
+    // Store with 2 decimal places
+    newRatios[index].ratio = parseFloat(value).toFixed(2);
+    setAllocationRatios(newRatios);
+  };
+
+  const getAllocationTotal = () => {
+    return allocationRatios.reduce((acc, curr) => acc + parseFloat(curr.ratio || '0'), 0);
+  };
+
+  const calculateAllocationEfficiencyFactor = (): number => {
+    const proportions = allocationRatios.map(ratio => parseFloat(ratio.ratio) / 100);
+    const sumSquaredProportions = proportions.reduce((acc, p) => acc + Math.pow(p, 2), 0);
+    return 1 / sumSquaredProportions;
+  };
+
   const calculateSampleSize = () => {
     try {
       setError('');
@@ -156,7 +220,15 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
         throw new Error('Please fill in all required fields');
       }
 
-      const stats = csvData.statistics[selectedMetric];
+      if (Math.abs(getAllocationTotal() - 100) >= 0.01) {
+        throw new Error('Allocation ratios must sum to 100%');
+      }
+
+      const stats = csvData?.statistics?.[selectedMetric];
+      if (!stats) {
+        throw new Error('No statistics available for selected metric');
+      }
+
       const mean = stats.mean;
       const stdDev = stats.standardDeviation;
       
@@ -164,51 +236,68 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
         throw new Error('Selected metric must be numeric');
       }
 
-      // Convert percentage MDE to absolute if needed
-      let absoluteMde = parseFloat(effectiveMde);
-      if (mdeType === 'percentage') {
-        absoluteMde = (parseFloat(effectiveMde) / 100) * mean;
-      }
-
-      // Calculate Z-scores
+      // Calculate Z-scores first
       const alphaValue = parseFloat(alpha);
       const betaValue = parseFloat(beta);
-      
+
       // Get number of paths and calculate Bonferroni-corrected alpha
       const effectiveNumPaths = numPaths === 'custom' ? parseInt(customPaths) || 2 : parseInt(numPaths);
-      // For k groups, we have k(k-1)/2 pairwise comparisons
       const numComparisons = (effectiveNumPaths * (effectiveNumPaths - 1)) / 2;
       const correctedAlpha = alphaValue / numComparisons;
 
-      // Add warning for large number of paths
       if (numComparisons > 10) {
         warnings.push(`Note: With ${effectiveNumPaths} paths, there are ${numComparisons} pairwise comparisons. ` +
           `The Bonferroni-corrected significance level (${(correctedAlpha * 100).toFixed(4)}%) ` +
           `is very conservative and may require a larger sample size than necessary.`);
       }
-      
-      // Calculate Z-alpha based on test type and corrected alpha
+
       const zAlpha = testType === 'one-tailed' 
         ? inversePhi(1 - correctedAlpha)
         : inversePhi(1 - correctedAlpha / 2);
       
-      // Calculate Z-beta (power)
       const zBeta = inversePhi(1 - betaValue);
 
-      // Calculate sample size per group
       const variance = stdDev * stdDev;
-      let sampleSizePerGroup = Math.ceil(
+      
+      let absoluteMde = parseFloat(effectiveMde);
+      if (mdeType === 'percentage') {
+        absoluteMde = (parseFloat(effectiveMde) / 100) * mean;
+      }
+
+      // Calculate base sample size
+      const baseSampleSizePerGroup = Math.ceil(
         2 * Math.pow(zAlpha + zBeta, 2) * variance / Math.pow(absoluteMde, 2)
       );
 
+      // Calculate allocation efficiency factor
+      const allocationEfficiencyFactor = calculateAllocationEfficiencyFactor();
+
+      // Adjust sample size based on allocation efficiency
+      const adjustedBaseSampleSize = Math.ceil(baseSampleSizePerGroup * allocationEfficiencyFactor);
+
+      // Calculate individual group sizes based on allocation ratios
+      const adjustedSampleSizes: { [key: string]: number } = {};
+      allocationRatios.forEach(ratio => {
+        adjustedSampleSizes[ratio.name] = Math.ceil(
+          (parseFloat(ratio.ratio) / 100) * adjustedBaseSampleSize * effectiveNumPaths
+        );
+      });
+
       // Calculate total sample size
-      const totalSampleSize = sampleSizePerGroup * effectiveNumPaths;
+      const totalSampleSize = Object.values(adjustedSampleSizes).reduce((a, b) => a + b, 0);
 
       // Calculate relative MDE as percentage of mean
       const relativeMde = (absoluteMde / mean) * 100;
 
+      if (allocationEfficiencyFactor > 1.1) {
+        warnings.push(
+          'Note: The current allocation ratios result in reduced statistical efficiency. ' +
+          'Equal allocation (50-50 for 2 paths, 33-33-33 for 3 paths, etc.) would be more efficient.'
+        );
+      }
+
       setResults({
-        sampleSizePerGroup,
+        sampleSizePerGroup: adjustedBaseSampleSize,
         totalSampleSize,
         mean,
         stdDev,
@@ -218,6 +307,8 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
         zBeta,
         correctedAlpha,
         numComparisons,
+        allocationEfficiencyFactor,
+        adjustedSampleSizes,
         warnings
       });
     } catch (err: any) {
@@ -302,7 +393,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
           {selectedMetric && (
             <Grid item xs={12}>
               <Typography variant="body2">
-                Mean: {csvData.statistics[selectedMetric].mean?.toFixed(4)}
+                Mean: {csvData?.statistics?.[selectedMetric]?.mean?.toFixed(4)}
                 <Tooltip title="The average value of your metric">
                   <IconButton size="small">
                     <InfoIcon fontSize="small" />
@@ -310,7 +401,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                 </Tooltip>
               </Typography>
               <Typography variant="body2">
-                Standard Deviation: {csvData.statistics[selectedMetric].standardDeviation?.toFixed(4)}
+                Standard Deviation: {csvData?.statistics?.[selectedMetric]?.standardDeviation?.toFixed(4)}
                 <Tooltip title="A measure of variability in your metric">
                   <IconButton size="small">
                     <InfoIcon fontSize="small" />
@@ -394,15 +485,9 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
               <InputLabel>Number of Paths</InputLabel>
               <Select
                 value={numPaths}
-                onChange={(e) => {
-                  setNumPaths(e.target.value);
-                  if (e.target.value !== 'custom') {
-                    setCustomPaths('');
-                  }
-                }}
+                onChange={(e) => handleNumPathsChange(e.target.value)}
                 label="Number of Paths"
               >
-                <MenuItem value="1">1-path (Control only)</MenuItem>
                 <MenuItem value="2">2-path (A/B)</MenuItem>
                 <MenuItem value="3">3-path (A/B/C)</MenuItem>
                 <MenuItem value="4">4-path (A/B/C/D)</MenuItem>
@@ -414,11 +499,11 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                 fullWidth
                 label="Custom Number of Paths"
                 value={customPaths}
-                onChange={(e) => setCustomPaths(e.target.value)}
+                onChange={(e) => handleCustomPathsChange(e.target.value)}
                 type="number"
-                inputProps={{ min: 1 }}
+                inputProps={{ min: 2 }}
                 sx={{ mt: 2 }}
-                helperText="Enter the number of paths (e.g. 20)"
+                helperText="Enter the number of paths (minimum 2)"
               />
             )}
           </Grid>
@@ -467,6 +552,111 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
             </FormControl>
           </Grid>
         </Grid>
+      </Paper>
+
+      {/* Allocation Ratios */}
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Typography variant="subtitle2" gutterBottom>
+          Allocation Ratios
+          <Tooltip title="Specify the percentage of total traffic allocated to each variant. Must sum to 100%.">
+            <IconButton size="small">
+              <InfoIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Typography>
+        
+        {/* Scrollable container for many variants */}
+        <Box sx={{ 
+          maxHeight: '400px', 
+          overflowY: 'auto',
+          pr: 2,
+          '&::-webkit-scrollbar': {
+            width: '8px',
+          },
+          '&::-webkit-scrollbar-track': {
+            background: '#f1f1f1',
+            borderRadius: '4px',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            background: '#888',
+            borderRadius: '4px',
+          },
+          '&::-webkit-scrollbar-thumb:hover': {
+            background: '#555',
+          },
+        }}>
+          <Grid container spacing={2}>
+            {allocationRatios.map((ratio, index) => (
+              <Grid item xs={12} sm={6} md={4} key={ratio.name}>
+                <TextField
+                  fullWidth
+                  label={ratio.name}
+                  value={ratio.ratio}
+                  onChange={(e) => handleAllocationRatioChange(index, e.target.value)}
+                  type="number"
+                  inputProps={{ 
+                    step: '0.01',
+                    min: '0',
+                    max: '100'
+                  }}
+                  sx={{
+                    mt: 3,
+                    '& .MuiInputLabel-root': {
+                      background: '#fff',
+                      padding: '0 4px',
+                    },
+                    '& .MuiInputLabel-shrink': {
+                      transform: 'translate(14px, -12px) scale(0.75)',
+                    },
+                    '& .MuiOutlinedInput-root': {
+                      '& fieldset': {
+                        top: 0,
+                      },
+                      '& input': {
+                        textAlign: 'left',
+                        paddingLeft: '14px'
+                      }
+                    }
+                  }}
+                  helperText={`${ratio.name} allocation (%)`}
+                  error={parseFloat(ratio.ratio) < 0 || parseFloat(ratio.ratio) > 100}
+                  variant="outlined"
+                />
+              </Grid>
+            ))}
+          </Grid>
+        </Box>
+
+        {/* Running Total */}
+        <Box sx={{ 
+          mt: 2, 
+          display: 'flex', 
+          alignItems: 'center',
+          gap: 1
+        }}>
+          <Typography 
+            variant="body1" 
+            sx={{ 
+              color: Math.abs(getAllocationTotal() - 100) < 0.000001 ? '#2e7d32' : '#d32f2f',
+              fontWeight: 'bold'
+            }}
+          >
+            Total: {getAllocationTotal().toFixed(6)}%
+          </Typography>
+          {Math.abs(getAllocationTotal() - 100) >= 0.000001 && (
+            <Typography 
+              variant="body2" 
+              sx={{ 
+                color: '#d32f2f',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.5
+              }}
+            >
+              <span>Must sum to 100%</span>
+            </Typography>
+          )}
+        </Box>
       </Paper>
 
       {/* Run Analysis Button */}
@@ -678,6 +868,30 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                     </Typography>
                   </Box>
                 </Box>
+              </Grid>
+
+              {/* Add Allocation Efficiency Results */}
+              <Grid item xs={12}>
+                <Typography variant="body1" sx={{ mb: 1 }}>
+                  Allocation Efficiency Factor: <strong>{results.allocationEfficiencyFactor.toFixed(4)}</strong>
+                  <Tooltip title="A measure of how efficient the chosen allocation ratios are compared to equal allocation. Values closer to 1 are more efficient.">
+                    <IconButton size="small">
+                      <InfoIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Typography>
+              </Grid>
+
+              {/* Sample Sizes per Group */}
+              <Grid item xs={12}>
+                <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>
+                  Sample Sizes per Group:
+                </Typography>
+                {Object.entries(results.adjustedSampleSizes).map(([group, size]) => (
+                  <Typography key={group} variant="body2" sx={{ ml: 2 }}>
+                    {group}: <strong>{size.toLocaleString()}</strong> samples
+                  </Typography>
+                ))}
               </Grid>
             </Grid>
           </Paper>
