@@ -20,11 +20,19 @@ import {
   FormLabel,
   Divider,
   ButtonGroup,
+  TableContainer,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
 } from '@mui/material';
 import InfoIcon from '@mui/icons-material/Info';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import ArrowDownward from '@mui/icons-material/ArrowDownward';
+import ArrowUpward from '@mui/icons-material/ArrowUpward';
 
 interface PowerAnalysisProps {
   csvData: any;
@@ -39,9 +47,15 @@ interface AllocationRatio {
   ratio: string;
 }
 
-interface CalculationResults {
-  sampleSizePerGroup: number;
+interface ComparisonResult {
+  group1: string;
+  group2: string;
+  vaf: number;
   totalSampleSize: number;
+}
+
+interface CalculationResults {
+  baseSampleSize: number;
   mean: number;
   stdDev: number;
   absoluteMde: number;
@@ -50,9 +64,12 @@ interface CalculationResults {
   zBeta: number;
   correctedAlpha: number;
   numComparisons: number;
-  allocationEfficiencyFactor: number;
-  adjustedSampleSizes: { [key: string]: number };
+  comparisons: ComparisonResult[];
   warnings?: string[];
+}
+
+interface SortOrder {
+  direction: 'asc' | 'desc' | null;
 }
 
 const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
@@ -95,6 +112,8 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
     { value: '20', label: '20%' },
     { value: 'custom', label: 'Custom value' }
   ];
+
+  const [sortOrder, setSortOrder] = useState<SortOrder>({ direction: null });
 
   const handleMdeChange = (value: string) => {
     setMde(value);
@@ -205,12 +224,6 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
     return allocationRatios.reduce((acc, curr) => acc + parseFloat(curr.ratio || '0'), 0);
   };
 
-  const calculateAllocationEfficiencyFactor = (): number => {
-    const proportions = allocationRatios.map(ratio => parseFloat(ratio.ratio) / 100);
-    const sumSquaredProportions = proportions.reduce((acc, p) => acc + Math.pow(p, 2), 0);
-    return 1 / sumSquaredProportions;
-  };
-
   const calculateSampleSize = () => {
     try {
       setError('');
@@ -264,41 +277,38 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
         absoluteMde = (parseFloat(effectiveMde) / 100) * mean;
       }
 
-      // Calculate base sample size
-      const baseSampleSizePerGroup = Math.ceil(
+      // Calculate base sample size (n_0)
+      const baseSampleSize = Math.ceil(
         2 * Math.pow(zAlpha + zBeta, 2) * variance / Math.pow(absoluteMde, 2)
       );
 
-      // Calculate allocation efficiency factor
-      const allocationEfficiencyFactor = calculateAllocationEfficiencyFactor();
-
-      // Adjust sample size based on allocation efficiency
-      const adjustedBaseSampleSize = Math.ceil(baseSampleSizePerGroup * allocationEfficiencyFactor);
-
-      // Calculate individual group sizes based on allocation ratios
-      const adjustedSampleSizes: { [key: string]: number } = {};
-      allocationRatios.forEach(ratio => {
-        adjustedSampleSizes[ratio.name] = Math.ceil(
-          (parseFloat(ratio.ratio) / 100) * adjustedBaseSampleSize * effectiveNumPaths
-        );
-      });
-
-      // Calculate total sample size
-      const totalSampleSize = Object.values(adjustedSampleSizes).reduce((a, b) => a + b, 0);
+      // Calculate VAF and adjusted sample sizes for all group comparisons
+      const comparisons: ComparisonResult[] = [];
+      for (let i = 0; i < allocationRatios.length; i++) {
+        for (let j = i + 1; j < allocationRatios.length; j++) {
+          const ratio1 = parseFloat(allocationRatios[i].ratio) / 100;
+          const ratio2 = parseFloat(allocationRatios[j].ratio) / 100;
+          
+          // Calculate VAF for this comparison
+          const vaf = 1/ratio1 + 1/ratio2;
+          
+          // Calculate total sample size for this comparison
+          const totalSampleSize = Math.ceil(vaf * baseSampleSize);
+          
+          comparisons.push({
+            group1: allocationRatios[i].name,
+            group2: allocationRatios[j].name,
+            vaf: vaf,
+            totalSampleSize: totalSampleSize
+          });
+        }
+      }
 
       // Calculate relative MDE as percentage of mean
       const relativeMde = (absoluteMde / mean) * 100;
 
-      if (allocationEfficiencyFactor > 1.1) {
-        warnings.push(
-          'Note: The current allocation ratios result in reduced statistical efficiency. ' +
-          'Equal allocation (50-50 for 2 paths, 33-33-33 for 3 paths, etc.) would be more efficient.'
-        );
-      }
-
       setResults({
-        sampleSizePerGroup: adjustedBaseSampleSize,
-        totalSampleSize,
+        baseSampleSize,
         mean,
         stdDev,
         absoluteMde,
@@ -307,8 +317,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
         zBeta,
         correctedAlpha,
         numComparisons,
-        allocationEfficiencyFactor,
-        adjustedSampleSizes,
+        comparisons,
         warnings
       });
     } catch (err: any) {
@@ -704,30 +713,94 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
               </Button>
             </Box>
 
+            {/* VAF and Sample Size Comparison Table */}
+            <Box sx={{ mt: 4 }}>
+              <Typography variant="h6" gutterBottom>
+                Group Comparisons and Required Sample Sizes
+              </Typography>
+              
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant="body2" color="text.secondary">
+                  Base sample size (n₀): {results.baseSampleSize.toLocaleString()}
+                </Typography>
+                <ButtonGroup size="small">
+                  <Button
+                    startIcon={<ArrowUpward />}
+                    onClick={() => setSortOrder({ direction: 'asc' })}
+                    variant={sortOrder.direction === 'asc' ? 'contained' : 'outlined'}
+                  >
+                    Sort Ascending
+                  </Button>
+                  <Button
+                    startIcon={<ArrowDownward />}
+                    onClick={() => setSortOrder({ direction: 'desc' })}
+                    variant={sortOrder.direction === 'desc' ? 'contained' : 'outlined'}
+                  >
+                    Sort Descending
+                  </Button>
+                </ButtonGroup>
+              </Box>
+
+              <TableContainer>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Group Comparison</TableCell>
+                      <TableCell align="right">
+                        VAF
+                        <Tooltip title="Variance Adjustment Factor (VAF) = 1/r₁ + 1/r₂, where r₁ and r₂ are the allocation ratios">
+                          <IconButton size="small">
+                            <InfoIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </TableCell>
+                      <TableCell align="right">
+                        Required Total Sample Size
+                        <Tooltip title="Total sample size = VAF × Base sample size">
+                          <IconButton size="small">
+                            <InfoIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {[...results.comparisons]
+                      .sort((a, b) => {
+                        if (sortOrder.direction === 'asc') {
+                          return a.totalSampleSize - b.totalSampleSize;
+                        } else if (sortOrder.direction === 'desc') {
+                          return b.totalSampleSize - a.totalSampleSize;
+                        }
+                        return 0;
+                      })
+                      .map((comparison, index) => (
+                        <TableRow 
+                          key={index}
+                          sx={{
+                            backgroundColor: index === 0 && sortOrder.direction === 'desc' ? 'rgba(0, 0, 0, 0.04)' : 'inherit'
+                          }}
+                        >
+                          <TableCell>{comparison.group1} vs {comparison.group2}</TableCell>
+                          <TableCell align="right">{comparison.vaf.toFixed(4)}</TableCell>
+                          <TableCell align="right">{comparison.totalSampleSize.toLocaleString()}</TableCell>
+                        </TableRow>
+                      ))
+                    }
+                  </TableBody>
+                </Table>
+              </TableContainer>
+
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+                Note: {sortOrder.direction === 'desc' ? 'The highlighted row shows' : 'The largest total sample size represents'} the minimum sample size needed to achieve 
+                the desired statistical power for all group comparisons.
+              </Typography>
+            </Box>
+
             {/* Main Results */}
             <Grid container spacing={2}>
               <Grid item xs={12}>
                 <Typography variant="body1" sx={{ mb: 1 }}>
-                  Required Sample Size per Group: <strong>{results.sampleSizePerGroup.toLocaleString()}</strong>
-                  <Tooltip title="Minimum number of samples needed in each test group">
-                    <IconButton size="small">
-                      <InfoIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                </Typography>
-              </Grid>
-              <Grid item xs={12}>
-                <Typography variant="body1" sx={{ mb: 1 }}>
-                  Total Required Sample Size: <strong>{results.totalSampleSize.toLocaleString()}</strong>
-                  <Tooltip title="Total number of samples needed across all test groups">
-                    <IconButton size="small">
-                      <InfoIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                </Typography>
-              </Grid>
-              <Grid item xs={12}>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                   Absolute MDE: {results.absoluteMde.toFixed(4)}
                   <Tooltip title="The MDE must have the same unit as your metric's standard deviation for the sample size calculation">
                     <IconButton size="small">
@@ -737,7 +810,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                 </Typography>
               </Grid>
               <Grid item xs={12}>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                <Typography variant="body1" sx={{ mb: 1 }}>
                   Relative MDE: {results.relativeMde.toFixed(2)}%
                 </Typography>
               </Grid>
@@ -780,7 +853,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                       height: '100%',
                       pb: '0.5rem'
                     }}>
-                      n =
+                      n₀ =
                     </Box>
                     <Box sx={{ 
                       display: 'inline-flex', 
@@ -817,8 +890,8 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
 
                   <Box sx={{ pl: 2 }}>
                     <Typography sx={{ mb: 1, fontFamily: 'inherit' }}>
-                      n  = {results.sampleSizePerGroup.toLocaleString()}
-                      <Box component="span" sx={{ color: 'text.secondary' }}> (required sample size per group)</Box>
+                      n₀ = {results.baseSampleSize.toLocaleString()}
+                      <Box component="span" sx={{ color: 'text.secondary' }}> (base sample size)</Box>
                     </Typography>
 
                     <Typography sx={{ mb: 1, fontFamily: 'inherit' }}>
@@ -850,48 +923,29 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                     </Typography>
                   </Box>
 
-                  {/* Total Sample Size Calculation */}
+                  {/* Sample Size Requirements */}
                   <Divider sx={{ mb: 2 }} />
                   <Typography variant="subtitle2" gutterBottom sx={{ mb: 2, fontWeight: 'bold' }}>
-                    Total Sample Size:
+                    Sample Size Requirements:
                   </Typography>
                   <Box sx={{ pl: 2 }}>
                     <Typography sx={{ fontFamily: 'inherit' }}>
-                      Total = n × {numPaths === 'custom' ? customPaths : numPaths} (number of groups)
+                      Base sample size (n₀) = {results.baseSampleSize.toLocaleString()}
                     </Typography>
-                    <Typography sx={{ 
-                      fontFamily: 'inherit', 
-                      fontWeight: 'bold',
-                      mt: 1 
-                    }}>
-                      Total = {results.totalSampleSize.toLocaleString()} samples
+                    <Typography sx={{ fontFamily: 'inherit', mt: 1 }}>
+                      For each comparison between groups:
+                    </Typography>
+                    <Typography sx={{ fontFamily: 'inherit', ml: 2 }}>
+                      VAF<sub>ij</sub> = 1/r<sub>i</sub> + 1/r<sub>j</sub>
+                    </Typography>
+                    <Typography sx={{ fontFamily: 'inherit', ml: 2 }}>
+                      n<sub>total</sub> = VAF<sub>ij</sub> × n₀
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+                      where i and j represent the groups being compared
                     </Typography>
                   </Box>
                 </Box>
-              </Grid>
-
-              {/* Add Allocation Efficiency Results */}
-              <Grid item xs={12}>
-                <Typography variant="body1" sx={{ mb: 1 }}>
-                  Allocation Efficiency Factor: <strong>{results.allocationEfficiencyFactor.toFixed(4)}</strong>
-                  <Tooltip title="A measure of how efficient the chosen allocation ratios are compared to equal allocation. Values closer to 1 are more efficient.">
-                    <IconButton size="small">
-                      <InfoIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                </Typography>
-              </Grid>
-
-              {/* Sample Sizes per Group */}
-              <Grid item xs={12}>
-                <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>
-                  Sample Sizes per Group:
-                </Typography>
-                {Object.entries(results.adjustedSampleSizes).map(([group, size]) => (
-                  <Typography key={group} variant="body2" sx={{ ml: 2 }}>
-                    {group}: <strong>{size.toLocaleString()}</strong> samples
-                  </Typography>
-                ))}
               </Grid>
             </Grid>
           </Paper>
