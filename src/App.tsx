@@ -489,9 +489,6 @@ function CorrelationHeatmap({ data, width, height }: { data: HeatmapCell[], widt
     return `rgba(244, 67, 54, ${Math.min(0.9, Math.abs(value) + 0.2)})`;
   };
 
-  // Calculate label positioning - now vertical
-  const labelOffset = maxLabelLength * 5; // Increased for vertical text
-
   // Helper function to format correlation value
   const formatCorrelation = (value: number): string => {
     const percentage = (value * 100).toFixed(1);
@@ -519,7 +516,7 @@ function CorrelationHeatmap({ data, width, height }: { data: HeatmapCell[], widt
             <g key={`col-${i}`}>
               <text
                 x={i * cellSize + cellSize / 2}
-                y={-10} // Reduced distance from heatmap
+                y={-10}
                 textAnchor="start"
                 transform={`rotate(-90, ${i * cellSize + cellSize / 2}, -10)`}
                 fontSize={fontSize}
