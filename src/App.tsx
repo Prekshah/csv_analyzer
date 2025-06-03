@@ -36,6 +36,7 @@ import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
 import InfoIcon from '@mui/icons-material/Info';
 import PowerAnalysis from './components/PowerAnalysis';
+import HypothesisTestingProposal from './components/HypothesisTestingProposal';
 /* Temporarily commented out */
 // import GroupSplitting from './components/GroupSplitting';
 
@@ -922,13 +923,15 @@ function BoxPlot({ data, width, height }: { data: BoxPlotData; width: number; he
 }
 
 function App() {
-  const [file, setFile] = useState<File | null>(null);
-  const [csvData, setCsvData] = useState<CSVData | null>(null);
   const [activeTab, setActiveTab] = useState(0);
+  const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [csvData, setCsvData] = useState<CSVData | null>(null);
   const [selectedDependentMetric, setSelectedDependentMetric] = useState<string>('');
   const [manualMetricInput, setManualMetricInput] = useState<string>('');
   const [metricError, setMetricError] = useState<string>('');
+  const [calculatedSampleSize, setCalculatedSampleSize] = useState<string>('');
+  const [calculatedVariance, setCalculatedVariance] = useState<string>('');
   
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
@@ -1937,7 +1940,7 @@ function App() {
   );
 
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
+    <Container maxWidth="xl">
       <Typography variant="h4" gutterBottom>CSV File Analyzer</Typography>
       
       <UploadArea
@@ -1998,29 +2001,31 @@ function App() {
       </UploadArea>
 
       {csvData && (
-        <>
+        <Box sx={{ width: '100%', typography: 'body1' }}>
           <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-            <Tabs value={activeTab} onChange={(_, newValue) => setActiveTab(newValue)}>
+            <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)} aria-label="analysis tabs">
               <Tab label="Summary" />
               <Tab label="Statistics" />
               <Tab label="Distributions" />
               <Tab label="Correlations" />
               <Tab label="Power Analysis" />
-              {/* Temporarily hidden Group Splitting tab */}
-              {/* <Tab label="Group Splitting" /> */}
+              <Tab label="Hypothesis Testing Proposal" />
             </Tabs>
           </Box>
 
-          <Box>
-            {activeTab === 0 && renderSummaryTab()}
-            {activeTab === 1 && renderStatisticsTab()}
-            {activeTab === 2 && renderDistributionsTab()}
-            {activeTab === 3 && renderCorrelationsTab()}
-            {activeTab === 4 && <PowerAnalysis csvData={csvData} />}
-            {/* Temporarily hidden Group Splitting rendering */}
-            {/* {activeTab === 5 && <GroupSplitting csvData={csvData} />} */}
-          </Box>
-        </>
+          {activeTab === 0 && renderSummaryTab()}
+          {activeTab === 1 && renderStatisticsTab()}
+          {activeTab === 2 && renderDistributionsTab()}
+          {activeTab === 3 && renderCorrelationsTab()}
+          {activeTab === 4 && <PowerAnalysis csvData={csvData} onSampleSizeCalculated={(size, variance) => {
+            setCalculatedSampleSize(size);
+            if (variance) setCalculatedVariance(variance);
+          }} />}
+          {activeTab === 5 && <HypothesisTestingProposal 
+            calculatedSampleSize={calculatedSampleSize} 
+            calculatedVariance={calculatedVariance}
+          />}
+        </Box>
       )}
     </Container>
   );

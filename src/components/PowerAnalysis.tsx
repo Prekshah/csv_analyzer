@@ -37,6 +37,7 @@ import CheckCircle from '@mui/icons-material/CheckCircle';
 
 interface PowerAnalysisProps {
   csvData: any;
+  onSampleSizeCalculated: (sampleSize: string, variance?: string) => void;
 }
 
 type TestType = 'one-tailed' | 'two-tailed';
@@ -73,7 +74,7 @@ interface SortOrder {
   direction: 'asc' | 'desc' | null;
 }
 
-const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
+const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData, onSampleSizeCalculated }) => {
   const [selectedMetric, setSelectedMetric] = useState<string>('');
   const [alpha, setAlpha] = useState<AlphaValue>('0.05');
   const [beta, setBeta] = useState<BetaValue>('0.2');
@@ -308,7 +309,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
       // Calculate relative MDE as percentage of mean
       const relativeMde = (absoluteMde / mean) * 100;
 
-      setResults({
+      const results: CalculationResults = {
         baseSampleSize,
         mean,
         stdDev,
@@ -320,9 +321,16 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
         numComparisons,
         comparisons,
         warnings
-      });
+      };
+
+      // Get the maximum total sample size from all comparisons
+      const maxTotalSampleSize = Math.max(...results.comparisons.map(comp => comp.totalSampleSize));
+
+      setResults(results);
+      onSampleSizeCalculated(maxTotalSampleSize.toString(), variance.toString());
     } catch (err: any) {
       setError(err.message);
+      console.error(err);
     }
   };
 
@@ -413,6 +421,14 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
               <Typography variant="body2">
                 Standard Deviation: {csvData?.statistics?.[selectedMetric]?.standardDeviation?.toFixed(4)}
                 <Tooltip title="A measure of variability in your metric">
+                  <IconButton size="small">
+                    <InfoIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Typography>
+              <Typography variant="body2">
+                Variance: {(csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toFixed(4)}
+                <Tooltip title="The square of standard deviation, another measure of variability">
                   <IconButton size="small">
                     <InfoIcon fontSize="small" />
                   </IconButton>
