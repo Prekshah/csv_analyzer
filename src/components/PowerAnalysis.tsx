@@ -87,49 +87,45 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
   onSampleSizeCalculated,
   onValuesChanged 
 }) => {
-  // Load initial state from localStorage or use defaults
-  const loadInitialState = () => {
-    const savedState = localStorage.getItem('powerAnalysisState');
-    if (savedState) {
-      const parsed = JSON.parse(savedState);
-      return {
-        selectedMetric: parsed.selectedMetric || '',
-        alpha: parsed.alpha || '0.05',
-        beta: parsed.beta || '0.2',
-        mde: parsed.mde || '5',
-        customMde: parsed.customMde || '',
-        mdeType: parsed.mdeType || 'percentage',
-        testType: parsed.testType || 'two-tailed',
-        numPaths: parsed.numPaths || '2',
-        customPaths: parsed.customPaths || '',
-        allocationRatios: parsed.allocationRatios || [
-          { name: 'Control', ratio: '50' },
-          { name: 'Variant A', ratio: '50' }
-        ]
-      };
-    }
-    return null;
-  };
-
-  const initialState = loadInitialState();
-  
-  const [selectedMetric, setSelectedMetric] = useState<string>(initialState?.selectedMetric || '');
-  const [alpha, setAlpha] = useState<AlphaValue>(initialState?.alpha as AlphaValue || '0.05');
-  const [beta, setBeta] = useState<BetaValue>(initialState?.beta as BetaValue || '0.2');
-  const [mde, setMde] = useState<string>(initialState?.mde || '5');
-  const [customMde, setCustomMde] = useState<string>(initialState?.customMde || '');
-  const [mdeType, setMdeType] = useState<'absolute' | 'percentage'>(initialState?.mdeType || 'percentage');
-  const [testType, setTestType] = useState<TestType>(initialState?.testType || 'two-tailed');
-  const [numPaths, setNumPaths] = useState<string>(initialState?.numPaths || '2');
-  const [customPaths, setCustomPaths] = useState<string>(initialState?.customPaths || '');
-  const [results, setResults] = useState<CalculationResults | null>(null);
-  const [error, setError] = useState<string>('');
-  const [allocationRatios, setAllocationRatios] = useState<AllocationRatio[]>(
-    initialState?.allocationRatios || [
+  // Default values
+  const defaultValues = {
+    selectedMetric: '',
+    alpha: '0.05' as AlphaValue,
+    beta: '0.2' as BetaValue,
+    mde: '5',
+    customMde: '',
+    mdeType: 'percentage' as 'absolute' | 'percentage',
+    testType: 'two-tailed' as TestType,
+    numPaths: '2',
+    customPaths: '',
+    allocationRatios: [
       { name: 'Control', ratio: '50' },
       { name: 'Variant A', ratio: '50' }
     ]
-  );
+  };
+
+  // Get initial state from session storage or use defaults
+  const getInitialState = () => {
+    const sessionState = sessionStorage.getItem('powerAnalysisState');
+    if (sessionState) {
+      return JSON.parse(sessionState);
+    }
+    return defaultValues;
+  };
+
+  // Initialize with session storage values or defaults
+  const [selectedMetric, setSelectedMetric] = useState<string>(getInitialState().selectedMetric);
+  const [alpha, setAlpha] = useState<AlphaValue>(getInitialState().alpha);
+  const [beta, setBeta] = useState<BetaValue>(getInitialState().beta);
+  const [mde, setMde] = useState<string>(getInitialState().mde);
+  const [customMde, setCustomMde] = useState<string>(getInitialState().customMde);
+  const [mdeType, setMdeType] = useState<'absolute' | 'percentage'>(getInitialState().mdeType);
+  const [testType, setTestType] = useState<TestType>(getInitialState().testType);
+  const [numPaths, setNumPaths] = useState<string>(getInitialState().numPaths);
+  const [customPaths, setCustomPaths] = useState<string>(getInitialState().customPaths);
+  const [results, setResults] = useState<CalculationResults | null>(null);
+  const [error, setError] = useState<string>('');
+  const [allocationRatios, setAllocationRatios] = useState<AllocationRatio[]>(getInitialState().allocationRatios);
   
   const resultsRef = useRef<HTMLDivElement>(null);
 
@@ -157,7 +153,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
 
   const [sortOrder, setSortOrder] = useState<SortOrder>({ direction: null });
 
-  // Save state to localStorage whenever relevant values change
+  // Save state to sessionStorage whenever values change
   useEffect(() => {
     const stateToSave = {
       selectedMetric,
@@ -171,35 +167,31 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
       customPaths,
       allocationRatios
     };
-    localStorage.setItem('powerAnalysisState', JSON.stringify(stateToSave));
+    sessionStorage.setItem('powerAnalysisState', JSON.stringify(stateToSave));
 
-    // Notify parent component of value changes
-    if (selectedMetric) {
-      onValuesChanged({
-        mde: mde === 'custom' ? customMde : mde,
-        mdeType,
-        power: (1 - parseFloat(beta)).toString(),
-        significanceLevel: alpha,
-        selectedMetric,
-        variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
-      });
-    }
+    // Notify parent component of value changes for HypothesisTestingProposal sync
+    onValuesChanged({
+      mde: mde === 'custom' ? customMde : mde,
+      mdeType,
+      power: (1 - parseFloat(beta)).toString(),
+      significanceLevel: alpha,
+      selectedMetric,
+      variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
+    });
   }, [selectedMetric, alpha, beta, mde, customMde, mdeType, testType, numPaths, customPaths, 
       allocationRatios, onValuesChanged, csvData?.statistics]);
 
-  // Initialize values in HypothesisTestingProposal when component mounts
+  // Clear session storage on page unload
   useEffect(() => {
-    if (selectedMetric) {
-      onValuesChanged({
-        mde: mde === 'custom' ? customMde : mde,
-        mdeType,
-        power: (1 - parseFloat(beta)).toString(),
-        significanceLevel: alpha,
-        selectedMetric,
-        variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
-      });
-    }
-  }, [selectedMetric, mde, customMde, mdeType, beta, alpha, onValuesChanged, csvData?.statistics]);
+    const handleUnload = () => {
+      sessionStorage.removeItem('powerAnalysisState');
+    };
+
+    window.addEventListener('beforeunload', handleUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+    };
+  }, []);
 
   const handleMetricSelect = (value: string) => {
     setSelectedMetric(value);
@@ -480,30 +472,46 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
       const maxTotalSampleSize = Math.max(...results.comparisons.map(comp => comp.totalSampleSize));
 
       setResults(results);
-      onSampleSizeCalculated(maxTotalSampleSize.toString(), variance.toString());
+      // Format variance to 4 decimal points before passing it up
+      onSampleSizeCalculated(maxTotalSampleSize.toString(), variance.toFixed(4));
     } catch (err: any) {
       setError(err.message);
       console.error(err);
+      // Clear the calculated values on error
+      onSampleSizeCalculated('', '');
     }
   };
 
   const handleReset = () => {
-    setSelectedMetric('');
-    setAlpha('0.05');
-    setBeta('0.2');
-    setMde('5');
-    setCustomMde('');
-    setMdeType('percentage');
-    setTestType('two-tailed');
-    setNumPaths('2');
-    setCustomPaths('');
+    // Reset to default values
+    setSelectedMetric(defaultValues.selectedMetric);
+    setAlpha(defaultValues.alpha);
+    setBeta(defaultValues.beta);
+    setMde(defaultValues.mde);
+    setCustomMde(defaultValues.customMde);
+    setMdeType(defaultValues.mdeType);
+    setTestType(defaultValues.testType);
+    setNumPaths(defaultValues.numPaths);
+    setCustomPaths(defaultValues.customPaths);
     setResults(null);
     setError('');
-    setAllocationRatios([
-      { name: 'Control', ratio: '50' },
-      { name: 'Variant A', ratio: '50' }
-    ]);
-    localStorage.removeItem('powerAnalysisState');
+    setAllocationRatios(defaultValues.allocationRatios);
+    
+    // Clear session storage
+    sessionStorage.removeItem('powerAnalysisState');
+    
+    // Clear the calculated values
+    onSampleSizeCalculated('', '');
+    
+    // Notify parent of reset values
+    onValuesChanged({
+      mde: defaultValues.mde,
+      mdeType: defaultValues.mdeType,
+      power: (1 - parseFloat(defaultValues.beta)).toString(),
+      significanceLevel: defaultValues.alpha,
+      selectedMetric: defaultValues.selectedMetric,
+      variance: ''
+    });
   };
 
   const isFormValid = () => {

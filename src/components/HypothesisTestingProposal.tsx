@@ -88,8 +88,8 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
   calculatedVariance,
   powerAnalysisValues
 }) => {
-  // Initialize with default values from PowerAnalysis
-  const getInitialState = (): ProposalData => ({
+  // Default values
+  const defaultValues = {
     title: '',
     architects: '',
     date: new Date().toISOString().split('T')[0],
@@ -105,14 +105,13 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
     targetPopulation: '',
     samplingStrategy: '',
     eda: '',
-    // Set initial values from PowerAnalysis - these are always available
-    mde: '5', // Default MDE value
-    power: '0.8', // Default power (1 - β) where β = 0.2
-    significanceLevel: '0.05', // Default significance level
-    variance: calculatedVariance || '',
-    sampleSize: calculatedSampleSize || '',
+    mde: '5',
+    power: '0.8',
+    significanceLevel: '0.05',
+    variance: '',
+    sampleSize: '',
     expectedDate: '',
-    primaryMetrics: powerAnalysisValues?.selectedMetric || '',
+    primaryMetrics: '',
     secondaryMetrics: '',
     guardrailMetrics: '',
     potentialRisks: '',
@@ -121,34 +120,25 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
     segments: '',
     fwerCorrection: 'Bonferroni Correction',
     comments: '',
-  });
+  };
+
+  // Use sessionStorage to persist during tab switches but clear on page reload
+  const getInitialState = () => {
+    const sessionState = sessionStorage.getItem('hypothesisProposalData');
+    if (sessionState) {
+      const parsedState = JSON.parse(sessionState);
+      return {
+        ...defaultValues,
+        ...parsedState
+      };
+    }
+    return defaultValues;
+  };
 
   const [proposalData, setProposalData] = useState<ProposalData>(getInitialState());
 
   const [openDialog, setOpenDialog] = useState(false);
   const [emptyFields, setEmptyFields] = useState<string[]>([]);
-
-  // Auto-save functionality
-  useEffect(() => {
-    const savedData = localStorage.getItem('hypothesisProposalData');
-    if (savedData) {
-      const parsedData = JSON.parse(savedData);
-      setProposalData(prev => ({
-        ...parsedData,
-        // Keep saved values if they exist, otherwise use PowerAnalysis values
-        mde: parsedData.mde || powerAnalysisValues?.mde || '5',
-        power: parsedData.power || powerAnalysisValues?.power || '0.8',
-        significanceLevel: parsedData.significanceLevel || powerAnalysisValues?.significanceLevel || '0.05',
-        variance: parsedData.variance || calculatedVariance || '',
-        sampleSize: parsedData.sampleSize || calculatedSampleSize || '',
-        primaryMetrics: parsedData.primaryMetrics || powerAnalysisValues?.selectedMetric || ''
-      }));
-    } else {
-      // If no saved data, initialize with PowerAnalysis values
-      setProposalData(getInitialState());
-    }
-  }, [powerAnalysisValues?.mde, powerAnalysisValues?.power, powerAnalysisValues?.significanceLevel, 
-      powerAnalysisValues?.selectedMetric, calculatedVariance, calculatedSampleSize, getInitialState]);
 
   // Update values when PowerAnalysis values change
   useEffect(() => {
@@ -158,47 +148,29 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
       const effectiveSignificanceLevel = powerAnalysisValues.significanceLevel || '0.05';
       
       setProposalData(prev => {
-        // Only update if the values are different
-        if (prev.mde !== effectiveMde ||
-            prev.power !== effectivePower ||
-            prev.significanceLevel !== effectiveSignificanceLevel ||
-            prev.primaryMetrics !== powerAnalysisValues.selectedMetric) {
-          return {
-            ...prev,
-            mde: effectiveMde,
-            power: effectivePower,
-            significanceLevel: effectiveSignificanceLevel,
-            primaryMetrics: powerAnalysisValues.selectedMetric || prev.primaryMetrics
-          };
-        }
-        return prev;
+        const newData = {
+          ...prev,
+          mde: effectiveMde,
+          power: effectivePower,
+          significanceLevel: effectiveSignificanceLevel,
+          primaryMetrics: powerAnalysisValues.selectedMetric || prev.primaryMetrics,
+          variance: calculatedVariance || prev.variance,
+          sampleSize: calculatedSampleSize || prev.sampleSize
+        };
+
+        // Save to sessionStorage
+        sessionStorage.setItem('hypothesisProposalData', JSON.stringify(newData));
+        return newData;
       });
     }
-  }, [powerAnalysisValues]);
+  }, [powerAnalysisValues, calculatedSampleSize, calculatedVariance]);
 
-  // Update sample size and variance when they are calculated
+  // Clear sessionStorage on unmount
   useEffect(() => {
-    if (calculatedSampleSize || calculatedVariance) {
-      setProposalData(prev => {
-        // Only update if the values are different
-        if (prev.sampleSize !== calculatedSampleSize ||
-            prev.variance !== calculatedVariance) {
-          return {
-            ...prev,
-            // Format variance to 4 decimal points to match PowerAnalysis
-            variance: calculatedVariance ? parseFloat(calculatedVariance).toFixed(4) : prev.variance,
-            sampleSize: calculatedSampleSize || prev.sampleSize
-          };
-        }
-        return prev;
-      });
-    }
-  }, [calculatedSampleSize, calculatedVariance]);
-
-  // Save to localStorage whenever proposalData changes
-  useEffect(() => {
-    localStorage.setItem('hypothesisProposalData', JSON.stringify(proposalData));
-  }, [proposalData]);
+    return () => {
+      sessionStorage.removeItem('hypothesisProposalData');
+    };
+  }, []);
 
   const handleChange = (field: keyof ProposalData) => (
     event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement> | SelectChangeEvent
@@ -275,7 +247,7 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
       {
         title: '4. Sample Size and Power Analysis',
         content: [
-          { label: 'Minimum Detectable Effect (MDE)', value: proposalData.mde },
+          { label: 'Minimum Detectable Effect (MDE)', value: proposalData.mde + '%' },
           { label: 'Statistical Power', value: proposalData.power },
           { label: 'Significance Level (α)', value: proposalData.significanceLevel },
           { label: 'Variance', value: proposalData.variance },
@@ -546,7 +518,7 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
             <TextField
               fullWidth
               label="Minimum Detectable Effect (MDE)"
-              value={proposalData.mde}
+              value={proposalData.mde + '%'}
               onChange={handleChange('mde')}
               helperText={powerAnalysisValues?.mde 
                 ? `Value from Power Analysis: ${powerAnalysisValues.mde}${powerAnalysisValues.mdeType === 'percentage' ? '%' : ''}`
@@ -584,6 +556,7 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
               helperText={calculatedVariance 
                 ? `Value from Power Analysis: ${parseFloat(calculatedVariance).toFixed(4)}`
                 : "Run Power Analysis to calculate"}
+              disabled // Make the field read-only
             />
           </Grid>
           <Grid item xs={12} md={6}>
@@ -595,6 +568,7 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
               helperText={calculatedSampleSize 
                 ? `Value from Power Analysis: ${calculatedSampleSize}`
                 : "Run Power Analysis to calculate"}
+              disabled // Make the field read-only
             />
           </Grid>
           <Grid item xs={12} md={6}>
