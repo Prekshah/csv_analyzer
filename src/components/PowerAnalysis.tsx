@@ -184,7 +184,8 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
         variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
       });
     }
-  }, [selectedMetric, alpha, beta, mde, customMde, mdeType, testType, numPaths, customPaths, allocationRatios]);
+  }, [selectedMetric, alpha, beta, mde, customMde, mdeType, testType, numPaths, customPaths, 
+      allocationRatios, onValuesChanged, csvData?.statistics]);
 
   // Initialize values in HypothesisTestingProposal when component mounts
   useEffect(() => {
@@ -198,7 +199,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
         variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
       });
     }
-  }, []);
+  }, [selectedMetric, mde, customMde, mdeType, beta, alpha, onValuesChanged, csvData?.statistics]);
 
   const handleMetricSelect = (value: string) => {
     setSelectedMetric(value);

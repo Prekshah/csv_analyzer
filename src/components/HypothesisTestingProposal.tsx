@@ -147,7 +147,8 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
       // If no saved data, initialize with PowerAnalysis values
       setProposalData(getInitialState());
     }
-  }, []); // Run only once on mount
+  }, [powerAnalysisValues?.mde, powerAnalysisValues?.power, powerAnalysisValues?.significanceLevel, 
+      powerAnalysisValues?.selectedMetric, calculatedVariance, calculatedSampleSize, getInitialState]);
 
   // Update values when PowerAnalysis values change
   useEffect(() => {
