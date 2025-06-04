@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Box,
   FormControl,
@@ -38,6 +38,14 @@ import CheckCircle from '@mui/icons-material/CheckCircle';
 interface PowerAnalysisProps {
   csvData: any;
   onSampleSizeCalculated: (sampleSize: string, variance?: string) => void;
+  onValuesChanged: (values: {
+    mde: string;
+    mdeType: 'absolute' | 'percentage';
+    power: string;
+    significanceLevel: string;
+    selectedMetric: string;
+    variance: string;
+  }) => void;
 }
 
 type TestType = 'one-tailed' | 'two-tailed';
@@ -74,22 +82,54 @@ interface SortOrder {
   direction: 'asc' | 'desc' | null;
 }
 
-const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData, onSampleSizeCalculated }) => {
-  const [selectedMetric, setSelectedMetric] = useState<string>('');
-  const [alpha, setAlpha] = useState<AlphaValue>('0.05');
-  const [beta, setBeta] = useState<BetaValue>('0.2');
-  const [mde, setMde] = useState<string>('5');
-  const [customMde, setCustomMde] = useState<string>('');
-  const [mdeType, setMdeType] = useState<'absolute' | 'percentage'>('percentage');
-  const [testType, setTestType] = useState<TestType>('two-tailed');
-  const [numPaths, setNumPaths] = useState<string>('2');
-  const [customPaths, setCustomPaths] = useState<string>('');
+const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ 
+  csvData, 
+  onSampleSizeCalculated,
+  onValuesChanged 
+}) => {
+  // Load initial state from localStorage or use defaults
+  const loadInitialState = () => {
+    const savedState = localStorage.getItem('powerAnalysisState');
+    if (savedState) {
+      const parsed = JSON.parse(savedState);
+      return {
+        selectedMetric: parsed.selectedMetric || '',
+        alpha: parsed.alpha || '0.05',
+        beta: parsed.beta || '0.2',
+        mde: parsed.mde || '5',
+        customMde: parsed.customMde || '',
+        mdeType: parsed.mdeType || 'percentage',
+        testType: parsed.testType || 'two-tailed',
+        numPaths: parsed.numPaths || '2',
+        customPaths: parsed.customPaths || '',
+        allocationRatios: parsed.allocationRatios || [
+          { name: 'Control', ratio: '50' },
+          { name: 'Variant A', ratio: '50' }
+        ]
+      };
+    }
+    return null;
+  };
+
+  const initialState = loadInitialState();
+  
+  const [selectedMetric, setSelectedMetric] = useState<string>(initialState?.selectedMetric || '');
+  const [alpha, setAlpha] = useState<AlphaValue>(initialState?.alpha as AlphaValue || '0.05');
+  const [beta, setBeta] = useState<BetaValue>(initialState?.beta as BetaValue || '0.2');
+  const [mde, setMde] = useState<string>(initialState?.mde || '5');
+  const [customMde, setCustomMde] = useState<string>(initialState?.customMde || '');
+  const [mdeType, setMdeType] = useState<'absolute' | 'percentage'>(initialState?.mdeType || 'percentage');
+  const [testType, setTestType] = useState<TestType>(initialState?.testType || 'two-tailed');
+  const [numPaths, setNumPaths] = useState<string>(initialState?.numPaths || '2');
+  const [customPaths, setCustomPaths] = useState<string>(initialState?.customPaths || '');
   const [results, setResults] = useState<CalculationResults | null>(null);
   const [error, setError] = useState<string>('');
-  const [allocationRatios, setAllocationRatios] = useState<AllocationRatio[]>([
-    { name: 'Control', ratio: '50' },
-    { name: 'Variant A', ratio: '50' }
-  ]);
+  const [allocationRatios, setAllocationRatios] = useState<AllocationRatio[]>(
+    initialState?.allocationRatios || [
+      { name: 'Control', ratio: '50' },
+      { name: 'Variant A', ratio: '50' }
+    ]
+  );
   
   const resultsRef = useRef<HTMLDivElement>(null);
 
@@ -117,13 +157,125 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData, onSampleSizeCalc
 
   const [sortOrder, setSortOrder] = useState<SortOrder>({ direction: null });
 
+  // Save state to localStorage whenever relevant values change
+  useEffect(() => {
+    const stateToSave = {
+      selectedMetric,
+      alpha,
+      beta,
+      mde,
+      customMde,
+      mdeType,
+      testType,
+      numPaths,
+      customPaths,
+      allocationRatios
+    };
+    localStorage.setItem('powerAnalysisState', JSON.stringify(stateToSave));
+
+    // Notify parent component of value changes
+    if (selectedMetric) {
+      onValuesChanged({
+        mde: mde === 'custom' ? customMde : mde,
+        mdeType,
+        power: (1 - parseFloat(beta)).toString(),
+        significanceLevel: alpha,
+        selectedMetric,
+        variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
+      });
+    }
+  }, [selectedMetric, alpha, beta, mde, customMde, mdeType, testType, numPaths, customPaths, allocationRatios]);
+
+  // Initialize values in HypothesisTestingProposal when component mounts
+  useEffect(() => {
+    if (selectedMetric) {
+      onValuesChanged({
+        mde: mde === 'custom' ? customMde : mde,
+        mdeType,
+        power: (1 - parseFloat(beta)).toString(),
+        significanceLevel: alpha,
+        selectedMetric,
+        variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
+      });
+    }
+  }, []);
+
+  const handleMetricSelect = (value: string) => {
+    setSelectedMetric(value);
+    const variance = csvData?.statistics?.[value]?.standardDeviation ** 2;
+    onValuesChanged({
+      mde: mde === 'custom' ? customMde : mde,
+      mdeType,
+      power: (1 - parseFloat(beta)).toString(),
+      significanceLevel: alpha,
+      selectedMetric: value,
+      variance: variance?.toString() || ''
+    });
+  };
+
   const handleMdeChange = (value: string) => {
     setMde(value);
     if (value !== 'custom') {
       setCustomMde('');
+      onValuesChanged({
+        mde: value,
+        mdeType,
+        power: (1 - parseFloat(beta)).toString(),
+        significanceLevel: alpha,
+        selectedMetric,
+        variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
+      });
     } else {
       setCustomMde(mde !== 'custom' ? mde : '');
     }
+  };
+
+  const handleCustomMdeChange = (value: string) => {
+    setCustomMde(value);
+    onValuesChanged({
+      mde: value,
+      mdeType,
+      power: (1 - parseFloat(beta)).toString(),
+      significanceLevel: alpha,
+      selectedMetric,
+      variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
+    });
+  };
+
+  const handleAlphaChange = (value: AlphaValue) => {
+    setAlpha(value);
+    onValuesChanged({
+      mde: mde === 'custom' ? customMde : mde,
+      mdeType,
+      power: (1 - parseFloat(beta)).toString(),
+      significanceLevel: value,
+      selectedMetric,
+      variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
+    });
+  };
+
+  const handleBetaChange = (value: BetaValue) => {
+    setBeta(value);
+    onValuesChanged({
+      mde: mde === 'custom' ? customMde : mde,
+      mdeType,
+      power: (1 - parseFloat(value)).toString(),
+      significanceLevel: alpha,
+      selectedMetric,
+      variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
+    });
+  };
+
+  const handleMdeTypeChange = (value: 'absolute' | 'percentage') => {
+    setMdeType(value);
+    onValuesChanged({
+      mde: mde === 'custom' ? customMde : mde,
+      mdeType: value,
+      power: (1 - parseFloat(beta)).toString(),
+      significanceLevel: alpha,
+      selectedMetric,
+      variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
+    });
   };
 
   const getEffectiveMde = () => {
@@ -346,6 +498,11 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData, onSampleSizeCalc
     setCustomPaths('');
     setResults(null);
     setError('');
+    setAllocationRatios([
+      { name: 'Control', ratio: '50' },
+      { name: 'Variant A', ratio: '50' }
+    ]);
+    localStorage.removeItem('powerAnalysisState');
   };
 
   const isFormValid = () => {
@@ -396,7 +553,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData, onSampleSizeCalc
               <InputLabel>Primary Metric</InputLabel>
               <Select
                 value={selectedMetric}
-                onChange={(e) => setSelectedMetric(e.target.value)}
+                onChange={(e) => handleMetricSelect(e.target.value)}
                 label="Primary Metric"
               >
                 {csvData?.columns?.map((column: string) => (
@@ -448,7 +605,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData, onSampleSizeCalc
               <InputLabel>Alpha (Significance Level)</InputLabel>
               <Select
                 value={alpha}
-                onChange={(e) => setAlpha(e.target.value as AlphaValue)}
+                onChange={(e) => handleAlphaChange(e.target.value as AlphaValue)}
                 label="Alpha (Significance Level)"
               >
                 {alphaOptions.map(option => (
@@ -464,7 +621,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData, onSampleSizeCalc
               <InputLabel>Statistical Power (1-β)</InputLabel>
               <Select
                 value={beta}
-                onChange={(e) => setBeta(e.target.value as BetaValue)}
+                onChange={(e) => handleBetaChange(e.target.value as BetaValue)}
                 label="Statistical Power (1-β)"
               >
                 {betaOptions.map(option => (
@@ -497,7 +654,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData, onSampleSizeCalc
                 fullWidth
                 label="Custom MDE Value"
                 value={customMde}
-                onChange={(e) => setCustomMde(e.target.value)}
+                onChange={(e) => handleCustomMdeChange(e.target.value)}
                 type="number"
                 inputProps={{ step: 'any' }}
                 sx={{ mt: 2 }}
@@ -541,7 +698,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData, onSampleSizeCalc
               <RadioGroup
                 row
                 value={mdeType}
-                onChange={(e) => setMdeType(e.target.value as 'absolute' | 'percentage')}
+                onChange={(e) => handleMdeTypeChange(e.target.value as 'absolute' | 'percentage')}
               >
                 <FormControlLabel 
                   value="percentage" 

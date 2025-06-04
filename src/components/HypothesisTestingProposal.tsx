@@ -73,13 +73,23 @@ interface ProposalData {
 interface HypothesisTestingProposalProps {
   calculatedSampleSize: string;
   calculatedVariance: string;
+  powerAnalysisValues: {
+    mde: string;
+    mdeType: 'absolute' | 'percentage';
+    power: string;
+    significanceLevel: string;
+    selectedMetric: string;
+    variance: string;
+  };
 }
 
 const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({ 
   calculatedSampleSize,
-  calculatedVariance
+  calculatedVariance,
+  powerAnalysisValues
 }) => {
-  const [proposalData, setProposalData] = useState<ProposalData>({
+  // Initialize with default values from PowerAnalysis
+  const getInitialState = (): ProposalData => ({
     title: '',
     architects: '',
     date: new Date().toISOString().split('T')[0],
@@ -95,13 +105,14 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
     targetPopulation: '',
     samplingStrategy: '',
     eda: '',
-    mde: '0.1', // Pre-filled from Power Analysis
-    power: '0.8', // Pre-filled from Power Analysis
-    significanceLevel: '0.05', // Pre-filled
-    variance: '', // To be filled from CSV Summary
-    sampleSize: '', // Calculated from Power Analysis
+    // Set initial values from PowerAnalysis - these are always available
+    mde: '5', // Default MDE value
+    power: '0.8', // Default power (1 - β) where β = 0.2
+    significanceLevel: '0.05', // Default significance level
+    variance: calculatedVariance || '',
+    sampleSize: calculatedSampleSize || '',
     expectedDate: '',
-    primaryMetrics: '',
+    primaryMetrics: powerAnalysisValues?.selectedMetric || '',
     secondaryMetrics: '',
     guardrailMetrics: '',
     potentialRisks: '',
@@ -112,6 +123,8 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
     comments: '',
   });
 
+  const [proposalData, setProposalData] = useState<ProposalData>(getInitialState());
+
   const [openDialog, setOpenDialog] = useState(false);
   const [emptyFields, setEmptyFields] = useState<string[]>([]);
 
@@ -119,33 +132,72 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
   useEffect(() => {
     const savedData = localStorage.getItem('hypothesisProposalData');
     if (savedData) {
-      setProposalData(JSON.parse(savedData));
+      const parsedData = JSON.parse(savedData);
+      setProposalData(prev => ({
+        ...parsedData,
+        // Keep saved values if they exist, otherwise use PowerAnalysis values
+        mde: parsedData.mde || powerAnalysisValues?.mde || '5',
+        power: parsedData.power || powerAnalysisValues?.power || '0.8',
+        significanceLevel: parsedData.significanceLevel || powerAnalysisValues?.significanceLevel || '0.05',
+        variance: parsedData.variance || calculatedVariance || '',
+        sampleSize: parsedData.sampleSize || calculatedSampleSize || '',
+        primaryMetrics: parsedData.primaryMetrics || powerAnalysisValues?.selectedMetric || ''
+      }));
+    } else {
+      // If no saved data, initialize with PowerAnalysis values
+      setProposalData(getInitialState());
     }
-  }, []);
+  }, []); // Run only once on mount
 
+  // Update values when PowerAnalysis values change
+  useEffect(() => {
+    if (powerAnalysisValues) {
+      const effectiveMde = powerAnalysisValues.mde || '5';
+      const effectivePower = powerAnalysisValues.power || '0.8';
+      const effectiveSignificanceLevel = powerAnalysisValues.significanceLevel || '0.05';
+      
+      setProposalData(prev => {
+        // Only update if the values are different
+        if (prev.mde !== effectiveMde ||
+            prev.power !== effectivePower ||
+            prev.significanceLevel !== effectiveSignificanceLevel ||
+            prev.primaryMetrics !== powerAnalysisValues.selectedMetric) {
+          return {
+            ...prev,
+            mde: effectiveMde,
+            power: effectivePower,
+            significanceLevel: effectiveSignificanceLevel,
+            primaryMetrics: powerAnalysisValues.selectedMetric || prev.primaryMetrics
+          };
+        }
+        return prev;
+      });
+    }
+  }, [powerAnalysisValues]);
+
+  // Update sample size and variance when they are calculated
+  useEffect(() => {
+    if (calculatedSampleSize || calculatedVariance) {
+      setProposalData(prev => {
+        // Only update if the values are different
+        if (prev.sampleSize !== calculatedSampleSize ||
+            prev.variance !== calculatedVariance) {
+          return {
+            ...prev,
+            // Format variance to 4 decimal points to match PowerAnalysis
+            variance: calculatedVariance ? parseFloat(calculatedVariance).toFixed(4) : prev.variance,
+            sampleSize: calculatedSampleSize || prev.sampleSize
+          };
+        }
+        return prev;
+      });
+    }
+  }, [calculatedSampleSize, calculatedVariance]);
+
+  // Save to localStorage whenever proposalData changes
   useEffect(() => {
     localStorage.setItem('hypothesisProposalData', JSON.stringify(proposalData));
   }, [proposalData]);
-
-  // Update sample size when calculatedSampleSize changes
-  useEffect(() => {
-    if (calculatedSampleSize) {
-      setProposalData(prev => ({
-        ...prev,
-        sampleSize: calculatedSampleSize
-      }));
-    }
-  }, [calculatedSampleSize]);
-
-  // Update variance when calculatedVariance changes
-  useEffect(() => {
-    if (calculatedVariance) {
-      setProposalData(prev => ({
-        ...prev,
-        variance: calculatedVariance
-      }));
-    }
-  }, [calculatedVariance]);
 
   const handleChange = (field: keyof ProposalData) => (
     event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement> | SelectChangeEvent
@@ -248,12 +300,6 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
           { label: 'FWER Correction Method', value: proposalData.fwerCorrection }
         ]
       },
-      {
-        title: '7. Review and Additional Considerations',
-        content: [
-          { label: 'Comments/Changes', value: proposalData.comments }
-        ]
-      }
     ];
 
     // Create the document
@@ -501,8 +547,9 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
               label="Minimum Detectable Effect (MDE)"
               value={proposalData.mde}
               onChange={handleChange('mde')}
-              type="number"
-              inputProps={{ step: 0.01 }}
+              helperText={powerAnalysisValues?.mde 
+                ? `Value from Power Analysis: ${powerAnalysisValues.mde}${powerAnalysisValues.mdeType === 'percentage' ? '%' : ''}`
+                : "Default: 5%"}
             />
           </Grid>
           <Grid item xs={12} md={6}>
@@ -511,8 +558,9 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
               label="Statistical Power"
               value={proposalData.power}
               onChange={handleChange('power')}
-              type="number"
-              inputProps={{ step: 0.01 }}
+              helperText={powerAnalysisValues?.power 
+                ? `Value from Power Analysis: ${powerAnalysisValues.power}`
+                : "Default: 0.8 (80%)"}
             />
           </Grid>
           <Grid item xs={12} md={6}>
@@ -521,8 +569,9 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
               label="Significance Level (α)"
               value={proposalData.significanceLevel}
               onChange={handleChange('significanceLevel')}
-              type="number"
-              inputProps={{ step: 0.01 }}
+              helperText={powerAnalysisValues?.significanceLevel 
+                ? `Value from Power Analysis: ${powerAnalysisValues.significanceLevel}`
+                : "Default: 0.05 (5%)"}
             />
           </Grid>
           <Grid item xs={12} md={6}>
@@ -531,25 +580,21 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
               label="Variance"
               value={proposalData.variance}
               onChange={handleChange('variance')}
-              type="number"
-              inputProps={{ step: 0.01 }}
+              helperText={calculatedVariance 
+                ? `Value from Power Analysis: ${parseFloat(calculatedVariance).toFixed(4)}`
+                : "Run Power Analysis to calculate"}
             />
           </Grid>
           <Grid item xs={12} md={6}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <TextField
-                fullWidth
-                label="Total Required Sample Size"
-                value={proposalData.sampleSize}
-                onChange={handleChange('sampleSize')}
-                type="number"
-              />
-              <Tooltip title="This is the total sample size needed for all group comparisons to achieve the desired statistical power. It accounts for the allocation ratios and multiple testing corrections.">
-                <IconButton size="small">
-                  <InfoIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-            </Box>
+            <TextField
+              fullWidth
+              label="Total Required Sample Size"
+              value={proposalData.sampleSize}
+              onChange={handleChange('sampleSize')}
+              helperText={calculatedSampleSize 
+                ? `Value from Power Analysis: ${calculatedSampleSize}`
+                : "Run Power Analysis to calculate"}
+            />
           </Grid>
           <Grid item xs={12} md={6}>
             <TextField
@@ -656,22 +701,6 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
                 <MenuItem value="None">None</MenuItem>
               </Select>
             </FormControl>
-          </Grid>
-        </Grid>
-      </StyledPaper>
-
-      <StyledPaper>
-        <SectionTitle variant="h6">7. Review and Additional Considerations</SectionTitle>
-        <Grid container spacing={3}>
-          <Grid item xs={12}>
-            <TextField
-              fullWidth
-              multiline
-              rows={4}
-              label="Comments/Changes"
-              value={proposalData.comments}
-              onChange={handleChange('comments')}
-            />
           </Grid>
         </Grid>
       </StyledPaper>

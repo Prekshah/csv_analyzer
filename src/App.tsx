@@ -932,6 +932,14 @@ function App() {
   const [metricError, setMetricError] = useState<string>('');
   const [calculatedSampleSize, setCalculatedSampleSize] = useState<string>('');
   const [calculatedVariance, setCalculatedVariance] = useState<string>('');
+  const [powerAnalysisValues, setPowerAnalysisValues] = useState({
+    mde: '',
+    mdeType: 'percentage' as 'absolute' | 'percentage',
+    power: '',
+    significanceLevel: '',
+    selectedMetric: '',
+    variance: ''
+  });
   
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
@@ -2017,13 +2025,18 @@ function App() {
           {activeTab === 1 && renderStatisticsTab()}
           {activeTab === 2 && renderDistributionsTab()}
           {activeTab === 3 && renderCorrelationsTab()}
-          {activeTab === 4 && <PowerAnalysis csvData={csvData} onSampleSizeCalculated={(size, variance) => {
-            setCalculatedSampleSize(size);
-            if (variance) setCalculatedVariance(variance);
-          }} />}
+          {activeTab === 4 && <PowerAnalysis 
+            csvData={csvData} 
+            onSampleSizeCalculated={(size, variance) => {
+              setCalculatedSampleSize(size);
+              if (variance) setCalculatedVariance(variance);
+            }}
+            onValuesChanged={(values) => setPowerAnalysisValues(values)}
+          />}
           {activeTab === 5 && <HypothesisTestingProposal 
             calculatedSampleSize={calculatedSampleSize} 
             calculatedVariance={calculatedVariance}
+            powerAnalysisValues={powerAnalysisValues}
           />}
         </Box>
       )}
