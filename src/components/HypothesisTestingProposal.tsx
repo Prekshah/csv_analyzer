@@ -56,7 +56,7 @@ interface ProposalData {
   mde: string;
   power: string;
   significanceLevel: string;
-  variance: string;
+  standardDeviation: string;
   sampleSize: string;
   expectedDate: string;
   primaryMetrics: string;
@@ -108,7 +108,7 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
     mde: '5',
     power: '0.8',
     significanceLevel: '0.05',
-    variance: '',
+    standardDeviation: '',
     sampleSize: '',
     expectedDate: '',
     primaryMetrics: '',
@@ -154,7 +154,7 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
           power: effectivePower,
           significanceLevel: effectiveSignificanceLevel,
           primaryMetrics: powerAnalysisValues.selectedMetric || prev.primaryMetrics,
-          variance: calculatedVariance || prev.variance,
+          standardDeviation: calculatedVariance ? Math.sqrt(parseFloat(calculatedVariance)).toFixed(4) : prev.standardDeviation,
           sampleSize: calculatedSampleSize || prev.sampleSize
         };
 
@@ -250,7 +250,7 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
           { label: 'Minimum Detectable Effect (MDE)', value: proposalData.mde + '%' },
           { label: 'Statistical Power', value: proposalData.power },
           { label: 'Significance Level (α)', value: proposalData.significanceLevel },
-          { label: 'Variance', value: proposalData.variance },
+          { label: 'Standard Deviation', value: proposalData.standardDeviation },
           { label: 'Total Required Sample Size', value: proposalData.sampleSize },
           { label: 'Expected Date to Reach Sample Size', value: proposalData.expectedDate }
         ]
@@ -550,11 +550,11 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
           <Grid item xs={12} md={6}>
             <TextField
               fullWidth
-              label="Variance"
-              value={proposalData.variance}
-              onChange={handleChange('variance')}
-              helperText={calculatedVariance 
-                ? `Value from Power Analysis: ${parseFloat(calculatedVariance).toFixed(4)}`
+              label="Standard Deviation"
+              value={proposalData.standardDeviation}
+              onChange={handleChange('standardDeviation')}
+              helperText={calculatedVariance
+                ? `Value from Power Analysis: ${Math.sqrt(parseFloat(calculatedVariance)).toFixed(4)}`
                 : "Run Power Analysis to calculate"}
               disabled // Make the field read-only
             />

@@ -61,7 +61,16 @@ interface ComparisonResult {
   group1: string;
   group2: string;
   vaf: number;
+  group1SampleSize: number;
+  group2SampleSize: number;
+}
+
+interface VAFResults {
+  pairwiseComparisons: ComparisonResult[];
+  maxVAF: number;
+  maxVAFPair: string;
   totalSampleSize: number;
+  groupSampleSizes: Map<string, number>;
 }
 
 interface CalculationResults {
@@ -76,11 +85,37 @@ interface CalculationResults {
   numComparisons: number;
   comparisons: ComparisonResult[];
   warnings?: string[];
+  vafResults: VAFResults;
 }
 
 interface SortOrder {
   direction: 'asc' | 'desc' | null;
 }
+
+const VAF_EQUAL = 4; // constant for 50-50 split (1/0.5 + 1/0.5)
+
+const calculateVAF = (ratio1: number, ratio2: number): number => {
+  return (1 / ratio1) + (1 / ratio2);
+};
+
+const calculateGroupSampleSizes = (totalSize: number, ratios: AllocationRatio[]): Map<string, number> => {
+  const groupSizes = new Map<string, number>();
+  let remainingSize = totalSize;
+  let allocatedSize = 0;
+
+  // First pass: Calculate raw sizes and floor them
+  for (let i = 0; i < ratios.length - 1; i++) {
+    const ratio = parseFloat(ratios[i].ratio) / 100;
+    const size = Math.floor(totalSize * ratio);
+    groupSizes.set(ratios[i].name, size);
+    allocatedSize += size;
+  }
+
+  // Last group gets the remaining samples to ensure total adds up exactly
+  groupSizes.set(ratios[ratios.length - 1].name, totalSize - allocatedSize);
+
+  return groupSizes;
+};
 
 const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ 
   csvData, 
@@ -376,12 +411,16 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
       setError('');
       const warnings: string[] = [];
       const effectiveMde = getEffectiveMde();
+      
+      // Validation checks
       if (!selectedMetric || !alpha || !beta || !effectiveMde) {
         throw new Error('Please fill in all required fields');
       }
 
-      if (Math.abs(getAllocationTotal() - 100) >= 0.01) {
-        throw new Error('Allocation ratios must sum to 100%');
+      // Check if allocation ratios sum to approximately 100%
+      const totalAllocation = getAllocationTotal();
+      if (Math.abs(totalAllocation - 100) > 0.01) {
+        throw new Error('Allocation ratios must sum to 100% (±0.01%)');
       }
 
       const stats = csvData?.statistics?.[selectedMetric];
@@ -424,32 +463,57 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
         absoluteMde = (parseFloat(effectiveMde) / 100) * mean;
       }
 
-      // Calculate base sample size (n_0)
+      // Calculate base sample size with Bonferroni correction
       const baseSampleSize = Math.ceil(
         2 * Math.pow(zAlpha + zBeta, 2) * variance / Math.pow(absoluteMde, 2)
       );
 
-      // Calculate VAF and adjusted sample sizes for all group comparisons
-      const comparisons: ComparisonResult[] = [];
+      // Calculate VAF for all pairs and find maximum
+      const vafResults: VAFResults = {
+        pairwiseComparisons: [],
+        maxVAF: 0,
+        maxVAFPair: '',
+        totalSampleSize: 0,
+        groupSampleSizes: new Map()
+      };
+
+      // Calculate VAF for each pair
       for (let i = 0; i < allocationRatios.length; i++) {
         for (let j = i + 1; j < allocationRatios.length; j++) {
           const ratio1 = parseFloat(allocationRatios[i].ratio) / 100;
           const ratio2 = parseFloat(allocationRatios[j].ratio) / 100;
           
-          // Calculate VAF for this comparison
-          const vaf = 1/ratio1 + 1/ratio2;
+          const vaf = calculateVAF(ratio1, ratio2);
           
-          // Calculate total sample size for this comparison
-          const totalSampleSize = Math.ceil(vaf * baseSampleSize);
-          
-          comparisons.push({
+          const comparison: ComparisonResult = {
             group1: allocationRatios[i].name,
             group2: allocationRatios[j].name,
             vaf: vaf,
-            totalSampleSize: totalSampleSize
-          });
+            group1SampleSize: 0, // Will be set after total sample size calculation
+            group2SampleSize: 0
+          };
+          
+          vafResults.pairwiseComparisons.push(comparison);
+          
+          if (vaf > vafResults.maxVAF) {
+            vafResults.maxVAF = vaf;
+            vafResults.maxVAFPair = `${allocationRatios[i].name} vs ${allocationRatios[j].name}`;
+          }
         }
       }
+
+      // Calculate total sample size using max VAF
+      vafResults.totalSampleSize = Math.ceil(baseSampleSize * (vafResults.maxVAF / VAF_EQUAL));
+
+      // Calculate individual group sample sizes
+      vafResults.groupSampleSizes = calculateGroupSampleSizes(vafResults.totalSampleSize, allocationRatios);
+
+      // Update comparison results with group sample sizes
+      vafResults.pairwiseComparisons = vafResults.pairwiseComparisons.map(comp => ({
+        ...comp,
+        group1SampleSize: vafResults.groupSampleSizes.get(comp.group1) || 0,
+        group2SampleSize: vafResults.groupSampleSizes.get(comp.group2) || 0
+      }));
 
       // Calculate relative MDE as percentage of mean
       const relativeMde = (absoluteMde / mean) * 100;
@@ -464,20 +528,17 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
         zBeta,
         correctedAlpha,
         numComparisons,
-        comparisons,
-        warnings
+        comparisons: vafResults.pairwiseComparisons,
+        warnings,
+        vafResults,
       };
-
-      // Get the maximum total sample size from all comparisons
-      const maxTotalSampleSize = Math.max(...results.comparisons.map(comp => comp.totalSampleSize));
 
       setResults(results);
       // Format variance to 4 decimal points before passing it up
-      onSampleSizeCalculated(maxTotalSampleSize.toString(), variance.toFixed(4));
+      onSampleSizeCalculated(vafResults.totalSampleSize.toString(), variance.toFixed(4));
     } catch (err: any) {
       setError(err.message);
       console.error(err);
-      // Clear the calculated values on error
       onSampleSizeCalculated('', '');
     }
   };
@@ -525,6 +586,17 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
     setTimeout(() => {
       resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 100);
+  };
+
+  const handleEqualSplit = () => {
+    const numGroups = allocationRatios.length;
+    const equalRatio = (100 / numGroups).toFixed(2);
+    const lastGroupRatio = (100 - (parseFloat(equalRatio) * (numGroups - 1))).toFixed(2);
+    
+    setAllocationRatios(allocationRatios.map((ratio, index) => ({
+      ...ratio,
+      ratio: index === numGroups - 1 ? lastGroupRatio : equalRatio
+    })));
   };
 
   return (
@@ -762,14 +834,8 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
           <Button
             size="small"
             variant="outlined"
-            onClick={() => {
-              const numGroups = allocationRatios.length;
-              const equalRatio = (100 / numGroups).toFixed(2);
-              setAllocationRatios(allocationRatios.map(ratio => ({
-                ...ratio,
-                ratio: equalRatio
-              })));
-            }}
+            onClick={handleEqualSplit}
+            startIcon={<RefreshIcon />}
             sx={{ mr: 1 }}
           >
             Equal Split
@@ -983,23 +1049,17 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
                           </IconButton>
                         </Tooltip>
                       </TableCell>
-                      <TableCell align="right">
-                        Required Total Sample Size
-                        <Tooltip title="Total sample size = VAF × Base sample size">
-                          <IconButton size="small">
-                            <InfoIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      </TableCell>
+                      <TableCell align="right">Group 1 Sample Size</TableCell>
+                      <TableCell align="right">Group 2 Sample Size</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {[...results.comparisons]
+                    {[...results.vafResults.pairwiseComparisons]
                       .sort((a, b) => {
                         if (sortOrder.direction === 'asc') {
-                          return a.totalSampleSize - b.totalSampleSize;
+                          return a.vaf - b.vaf;
                         } else if (sortOrder.direction === 'desc') {
-                          return b.totalSampleSize - a.totalSampleSize;
+                          return b.vaf - a.vaf;
                         }
                         return 0;
                       })
@@ -1007,12 +1067,13 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
                         <TableRow 
                           key={index}
                           sx={{
-                            backgroundColor: index === 0 && sortOrder.direction === 'desc' ? 'rgba(0, 0, 0, 0.04)' : 'inherit'
+                            backgroundColor: comparison.vaf === results.vafResults.maxVAF ? 'rgba(0, 0, 0, 0.04)' : 'inherit'
                           }}
                         >
                           <TableCell>{comparison.group1} vs {comparison.group2}</TableCell>
                           <TableCell align="right">{comparison.vaf.toFixed(4)}</TableCell>
-                          <TableCell align="right">{comparison.totalSampleSize.toLocaleString()}</TableCell>
+                          <TableCell align="right">{comparison.group1SampleSize.toLocaleString()}</TableCell>
+                          <TableCell align="right">{comparison.group2SampleSize.toLocaleString()}</TableCell>
                         </TableRow>
                       ))
                     }
@@ -1020,9 +1081,33 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
                 </Table>
               </TableContainer>
 
+              <Box sx={{ mt: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1 }}>
+                <Typography variant="h6" gutterBottom>
+                  Final Sample Size Results
+                </Typography>
+                <Typography variant="body1" sx={{ mb: 1 }}>
+                  Maximum VAF: {results.vafResults.maxVAF.toFixed(4)} ({results.vafResults.maxVAFPair})
+                </Typography>
+                <Typography variant="body1" sx={{ mb: 1 }}>
+                  Total Required Sample Size: {results.vafResults.totalSampleSize.toLocaleString()}
+                </Typography>
+                <Typography variant="subtitle1" sx={{ mt: 2, mb: 1 }}>
+                  Sample Size per Group:
+                </Typography>
+                <Grid container spacing={2}>
+                  {Array.from(results.vafResults.groupSampleSizes.entries()).map(([group, size]) => (
+                    <Grid item xs={12} sm={6} md={4} key={group}>
+                      <Typography variant="body2">
+                        {group}: {size.toLocaleString()} samples ({((size / results.vafResults.totalSampleSize) * 100).toFixed(2)}%)
+                      </Typography>
+                    </Grid>
+                  ))}
+                </Grid>
+              </Box>
+
               <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-                Note: {sortOrder.direction === 'desc' ? 'The highlighted row shows' : 'The largest total sample size represents'} the minimum sample size needed to achieve 
-                the desired statistical power for all group comparisons.
+                Note: The highlighted row shows the comparison with the maximum VAF, which determines the total sample size requirement.
+                Sample sizes are calculated using the Bonferroni-corrected base sample size and adjusted for the allocation ratios.
               </Typography>
             </Box>
 
