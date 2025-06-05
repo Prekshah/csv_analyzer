@@ -58,7 +58,8 @@ interface ProposalData {
   significanceLevel: string;
   standardDeviation: string;
   sampleSize: string;
-  expectedDate: string;
+  usersPerDay: string;
+  expectedDays: string;
   primaryMetrics: string;
   secondaryMetrics: string;
   guardrailMetrics: string;
@@ -110,7 +111,8 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
     significanceLevel: '0.05',
     standardDeviation: '',
     sampleSize: '',
-    expectedDate: '',
+    usersPerDay: '',
+    expectedDays: '',
     primaryMetrics: '',
     secondaryMetrics: '',
     guardrailMetrics: '',
@@ -175,9 +177,20 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
   const handleChange = (field: keyof ProposalData) => (
     event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement> | SelectChangeEvent
   ) => {
-    setProposalData({
-      ...proposalData,
-      [field]: event.target.value,
+    const newValue = event.target.value;
+    setProposalData(prev => {
+      const newData = { ...prev, [field]: newValue };
+      
+      // Calculate expected days when users per day changes
+      if (field === 'usersPerDay' && newValue && prev.sampleSize) {
+        const usersPerDay = parseFloat(newValue);
+        const sampleSize = parseFloat(prev.sampleSize);
+        if (!isNaN(usersPerDay) && !isNaN(sampleSize) && usersPerDay > 0) {
+          newData.expectedDays = Math.ceil(sampleSize / usersPerDay).toString();
+        }
+      }
+      
+      return newData;
     });
   };
 
@@ -252,7 +265,11 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
           { label: 'Significance Level (α)', value: proposalData.significanceLevel },
           { label: 'Standard Deviation', value: proposalData.standardDeviation },
           { label: 'Total Required Sample Size', value: proposalData.sampleSize },
-          { label: 'Expected Date to Reach Sample Size', value: proposalData.expectedDate }
+          { label: 'Average Users Per Day', value: proposalData.usersPerDay },
+          { label: 'Expected Days to Reach Sample Size', value: proposalData.expectedDays + ' days' },
+          { label: 'Sample Size Summary', value: proposalData.usersPerDay && proposalData.sampleSize ? 
+            `With an average of ${proposalData.usersPerDay} users per day and a sample size of ${proposalData.sampleSize}, we expect to reach the required sample size in ${proposalData.expectedDays} days.` : 
+            'Not calculated' }
         ]
       },
       {
@@ -574,11 +591,27 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
           <Grid item xs={12} md={6}>
             <TextField
               fullWidth
-              type="date"
-              label="Expected Date to Reach Sample Size"
-              value={proposalData.expectedDate}
-              onChange={handleChange('expectedDate')}
-              InputLabelProps={{ shrink: true }}
+              label="Users Per Day"
+              value={proposalData.usersPerDay}
+              onChange={handleChange('usersPerDay')}
+              placeholder="e.g., 1200"
+              type="number"
+              helperText="Enter the average number of users per day"
+            />
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <TextField
+              fullWidth
+              label="Expected Days to Reach Sample Size"
+              value={proposalData.expectedDays}
+              InputProps={{
+                readOnly: true,
+              }}
+              helperText={
+                proposalData.usersPerDay && proposalData.sampleSize
+                  ? `With ${proposalData.usersPerDay} users per day and a sample size of ${proposalData.sampleSize}, we expect to reach the required sample size in ${proposalData.expectedDays} days.`
+                  : "Will be calculated based on Users Per Day and Sample Size"
+              }
             />
           </Grid>
         </Grid>

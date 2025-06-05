@@ -603,27 +603,15 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Typography variant="h6">Power Analysis Calculator</Typography>
-        <ButtonGroup>
-          <Button
-            startIcon={<RefreshIcon />}
-            onClick={calculateSampleSize}
-            disabled={!selectedMetric}
-            color="primary"
-            variant="contained"
-            size="small"
-          >
-            Re-run Analysis
-          </Button>
-          <Button
-            startIcon={<RestartAltIcon />}
-            onClick={handleReset}
-            color="secondary"
-            variant="outlined"
-            size="small"
-          >
-            Reset
-          </Button>
-        </ButtonGroup>
+        <Button
+          startIcon={<RestartAltIcon />}
+          onClick={handleReset}
+          color="secondary"
+          variant="outlined"
+          size="small"
+        >
+          Reset
+        </Button>
       </Box>
       
       {/* Metric Selection */}
@@ -996,16 +984,39 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
                 ))}
               </Alert>
             )}
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            <Box sx={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center', 
+              mb: 2 
+            }}>
               <Typography variant="h6">Results</Typography>
-              <Button
-                startIcon={<RefreshIcon />}
-                onClick={calculateSampleSize}
-                color="primary"
-                size="small"
-              >
-                Recalculate
-              </Button>
+              <Box sx={{ 
+                border: '1px solid #e0e0e0', 
+                borderRadius: 1,
+                p: 1,
+                display: 'flex',
+                gap: 1
+              }}>
+                <Button
+                  startIcon={<RefreshIcon />}
+                  onClick={calculateSampleSize}
+                  color="primary"
+                  size="small"
+                  variant="contained"
+                >
+                  Recalculate
+                </Button>
+                <Button
+                  startIcon={<RestartAltIcon />}
+                  onClick={handleReset}
+                  color="secondary"
+                  size="small"
+                  variant="outlined"
+                >
+                  Reset
+                </Button>
+              </Box>
             </Box>
 
             {/* VAF and Sample Size Comparison Table */}
@@ -1018,30 +1029,14 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
                 <Typography variant="body2" color="text.secondary">
                   Base sample size (n₀): {results.baseSampleSize.toLocaleString()}
                 </Typography>
-                <ButtonGroup size="small">
-                  <Button
-                    startIcon={<ArrowUpward />}
-                    onClick={() => setSortOrder({ direction: 'asc' })}
-                    variant={sortOrder.direction === 'asc' ? 'contained' : 'outlined'}
-                  >
-                    Sort Ascending
-                  </Button>
-                  <Button
-                    startIcon={<ArrowDownward />}
-                    onClick={() => setSortOrder({ direction: 'desc' })}
-                    variant={sortOrder.direction === 'desc' ? 'contained' : 'outlined'}
-                  >
-                    Sort Descending
-                  </Button>
-                </ButtonGroup>
               </Box>
 
               <TableContainer>
-                <Table size="small">
+                <Table size="small" sx={{ width: 'auto', minWidth: '400px', maxWidth: '600px' }}>
                   <TableHead>
                     <TableRow>
-                      <TableCell>Group Comparison</TableCell>
-                      <TableCell align="right">
+                      <TableCell sx={{ width: '60%' }}>Group Comparison</TableCell>
+                      <TableCell align="right" sx={{ width: '40%' }}>
                         VAF
                         <Tooltip title="Variance Adjustment Factor (VAF) = 1/r₁ + 1/r₂, where r₁ and r₂ are the allocation ratios">
                           <IconButton size="small">
@@ -1049,34 +1044,20 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
                           </IconButton>
                         </Tooltip>
                       </TableCell>
-                      <TableCell align="right">Group 1 Sample Size</TableCell>
-                      <TableCell align="right">Group 2 Sample Size</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {[...results.vafResults.pairwiseComparisons]
-                      .sort((a, b) => {
-                        if (sortOrder.direction === 'asc') {
-                          return a.vaf - b.vaf;
-                        } else if (sortOrder.direction === 'desc') {
-                          return b.vaf - a.vaf;
-                        }
-                        return 0;
-                      })
-                      .map((comparison, index) => (
-                        <TableRow 
-                          key={index}
-                          sx={{
-                            backgroundColor: comparison.vaf === results.vafResults.maxVAF ? 'rgba(0, 0, 0, 0.04)' : 'inherit'
-                          }}
-                        >
-                          <TableCell>{comparison.group1} vs {comparison.group2}</TableCell>
-                          <TableCell align="right">{comparison.vaf.toFixed(4)}</TableCell>
-                          <TableCell align="right">{comparison.group1SampleSize.toLocaleString()}</TableCell>
-                          <TableCell align="right">{comparison.group2SampleSize.toLocaleString()}</TableCell>
-                        </TableRow>
-                      ))
-                    }
+                    {results.vafResults.pairwiseComparisons.map((comparison, index) => (
+                      <TableRow 
+                        key={index}
+                        sx={{
+                          backgroundColor: comparison.vaf === results.vafResults.maxVAF ? 'rgba(0, 0, 0, 0.04)' : 'inherit'
+                        }}
+                      >
+                        <TableCell sx={{ width: '60%' }}>{comparison.group1} vs {comparison.group2}</TableCell>
+                        <TableCell align="right" sx={{ width: '40%' }}>{comparison.vaf.toFixed(4)}</TableCell>
+                      </TableRow>
+                    ))}
                   </TableBody>
                 </Table>
               </TableContainer>
@@ -1094,15 +1075,13 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
                 <Typography variant="subtitle1" sx={{ mt: 2, mb: 1 }}>
                   Sample Size per Group:
                 </Typography>
-                <Grid container spacing={2}>
+                <Box sx={{ pl: 2 }}>
                   {Array.from(results.vafResults.groupSampleSizes.entries()).map(([group, size]) => (
-                    <Grid item xs={12} sm={6} md={4} key={group}>
-                      <Typography variant="body2">
-                        {group}: {size.toLocaleString()} samples ({((size / results.vafResults.totalSampleSize) * 100).toFixed(2)}%)
-                      </Typography>
-                    </Grid>
+                    <Typography key={group} variant="body2" sx={{ mb: 1 }}>
+                      {group}: {size.toLocaleString()} samples ({((size / results.vafResults.totalSampleSize) * 100).toFixed(2)}%)
+                    </Typography>
                   ))}
-                </Grid>
+                </Box>
               </Box>
 
               <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
@@ -1179,7 +1158,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
                         minWidth: '240px',
                         textAlign: 'center'
                       }}>
-                        2σ² × (Z<sub>{testType === 'one-tailed' ? '1-α' : '1-α/2'}</sub> + Z<sub>1-β</sub>)²
+                        2σ² × (Z<sub>α</sub> + Z<sub>β</sub>)²
                       </Box>
                       <Box className="fraction-line" sx={{ 
                         width: '100%',
@@ -1209,8 +1188,8 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
                     </Typography>
 
                     <Typography sx={{ mb: 1, fontFamily: 'inherit' }}>
-                      σ  = {results.stdDev.toFixed(4)}
-                      <Box component="span" sx={{ color: 'text.secondary' }}> (standard deviation in 
+                      σ² = {(results.stdDev * results.stdDev).toFixed(4)}
+                      <Box component="span" sx={{ color: 'text.secondary' }}> (variance in 
                         <Box component="span" sx={{ fontWeight: 600, color: 'text.primary', opacity: 0.9 }}> {selectedMetric} units</Box>)
                       </Box>
                     </Typography>
@@ -1223,7 +1202,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
                     </Typography>
 
                     <Typography sx={{ mb: 1, fontFamily: 'inherit' }}>
-                      Z<sub>{testType === 'one-tailed' ? '1-α' : '1-α/2'}</sub> = {results.zAlpha.toFixed(4)}
+                      Z<sub>α</sub> = {results.zAlpha.toFixed(4)}
                       <Box component="span" sx={{ color: 'text.secondary' }}> 
                         (Z-score for {(results.correctedAlpha * 100).toFixed(3)}% significance level
                         {testType === 'two-tailed' ? ' (two-tailed)' : ''}, 
@@ -1232,7 +1211,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
                     </Typography>
 
                     <Typography sx={{ mb: 3, fontFamily: 'inherit' }}>
-                      Z<sub>1-β</sub> = {results.zBeta.toFixed(4)}
+                      Z<sub>β</sub> = {results.zBeta.toFixed(4)}
                       <Box component="span" sx={{ color: 'text.secondary' }}> (Z-score for {((1 - parseFloat(beta)) * 100).toFixed(0)}% power level)</Box>
                     </Typography>
                   </Box>
@@ -1240,23 +1219,40 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
                   {/* Sample Size Requirements */}
                   <Divider sx={{ mb: 2 }} />
                   <Typography variant="subtitle2" gutterBottom sx={{ mb: 2, fontWeight: 'bold' }}>
-                    Sample Size Requirements:
+                    Sample Size Calculation for Unequal Splits:
                   </Typography>
                   <Box sx={{ pl: 2 }}>
-                    <Typography sx={{ fontFamily: 'inherit' }}>
-                      Base sample size (n₀) = {results.baseSampleSize.toLocaleString()}
-                    </Typography>
-                    <Typography sx={{ fontFamily: 'inherit', mt: 1 }}>
-                      For each comparison between groups:
-                    </Typography>
-                    <Typography sx={{ fontFamily: 'inherit', ml: 2 }}>
-                      VAF<sub>ij</sub> = 1/r<sub>i</sub> + 1/r<sub>j</sub>
-                    </Typography>
-                    <Typography sx={{ fontFamily: 'inherit', ml: 2 }}>
-                      n<sub>total</sub> = VAF<sub>ij</sub> × n₀
-                    </Typography>
+                    <Box sx={{ 
+                      display: 'flex',
+                      alignItems: 'center',
+                      ml: 2,
+                      fontFamily: 'inherit'
+                    }}>
+                      <Typography sx={{ fontFamily: 'inherit' }}>
+                        n<sub>total</sub> = n₀ × 
+                      </Typography>
+                      <Box sx={{ 
+                        display: 'inline-flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        mx: 1
+                      }}>
+                        <Typography sx={{ fontFamily: 'inherit' }}>
+                          {results.vafResults.maxVAF.toFixed(4)}
+                        </Typography>
+                        <Box sx={{ 
+                          width: '100%',
+                          height: '1px',
+                          bgcolor: 'text.primary',
+                          my: 0.5
+                        }} />
+                        <Typography sx={{ fontFamily: 'inherit' }}>
+                          4
+                        </Typography>
+                      </Box>
+                    </Box>
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-                      where i and j represent the groups being compared
+                      where {results.vafResults.maxVAF.toFixed(4)} is the maximum VAF from {results.vafResults.maxVAFPair}
                     </Typography>
                   </Box>
                 </Box>
