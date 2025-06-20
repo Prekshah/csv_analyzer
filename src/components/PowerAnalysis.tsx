@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Box,
   FormControl,
@@ -37,6 +37,15 @@ import CheckCircle from '@mui/icons-material/CheckCircle';
 
 interface PowerAnalysisProps {
   csvData: any;
+  onSampleSizeCalculated: (sampleSize: string, variance?: string) => void;
+  onValuesChanged: (values: {
+    mde: string;
+    mdeType: 'absolute' | 'percentage';
+    power: string;
+    significanceLevel: string;
+    selectedMetric: string;
+    variance: string;
+  }) => void;
 }
 
 type TestType = 'one-tailed' | 'two-tailed';
@@ -52,7 +61,16 @@ interface ComparisonResult {
   group1: string;
   group2: string;
   vaf: number;
+  group1SampleSize: number;
+  group2SampleSize: number;
+}
+
+interface VAFResults {
+  pairwiseComparisons: ComparisonResult[];
+  maxVAF: number;
+  maxVAFPair: string;
   totalSampleSize: number;
+  groupSampleSizes: Map<string, number>;
 }
 
 interface CalculationResults {
@@ -67,28 +85,82 @@ interface CalculationResults {
   numComparisons: number;
   comparisons: ComparisonResult[];
   warnings?: string[];
+  vafResults: VAFResults;
 }
 
 interface SortOrder {
   direction: 'asc' | 'desc' | null;
 }
 
-const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
-  const [selectedMetric, setSelectedMetric] = useState<string>('');
-  const [alpha, setAlpha] = useState<AlphaValue>('0.05');
-  const [beta, setBeta] = useState<BetaValue>('0.2');
-  const [mde, setMde] = useState<string>('5');
-  const [customMde, setCustomMde] = useState<string>('');
-  const [mdeType, setMdeType] = useState<'absolute' | 'percentage'>('percentage');
-  const [testType, setTestType] = useState<TestType>('two-tailed');
-  const [numPaths, setNumPaths] = useState<string>('2');
-  const [customPaths, setCustomPaths] = useState<string>('');
+const VAF_EQUAL = 4; // constant for 50-50 split (1/0.5 + 1/0.5)
+
+const calculateVAF = (ratio1: number, ratio2: number): number => {
+  return (1 / ratio1) + (1 / ratio2);
+};
+
+const calculateGroupSampleSizes = (totalSize: number, ratios: AllocationRatio[]): Map<string, number> => {
+  const groupSizes = new Map<string, number>();
+  let remainingSize = totalSize;
+  let allocatedSize = 0;
+
+  // First pass: Calculate raw sizes and floor them
+  for (let i = 0; i < ratios.length - 1; i++) {
+    const ratio = parseFloat(ratios[i].ratio) / 100;
+    const size = Math.floor(totalSize * ratio);
+    groupSizes.set(ratios[i].name, size);
+    allocatedSize += size;
+  }
+
+  // Last group gets the remaining samples to ensure total adds up exactly
+  groupSizes.set(ratios[ratios.length - 1].name, totalSize - allocatedSize);
+
+  return groupSizes;
+};
+
+const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ 
+  csvData, 
+  onSampleSizeCalculated,
+  onValuesChanged 
+}) => {
+  // Default values
+  const defaultValues = {
+    selectedMetric: '',
+    alpha: '0.05' as AlphaValue,
+    beta: '0.2' as BetaValue,
+    mde: '5',
+    customMde: '',
+    mdeType: 'percentage' as 'absolute' | 'percentage',
+    testType: 'two-tailed' as TestType,
+    numPaths: '2',
+    customPaths: '',
+    allocationRatios: [
+      { name: 'Control', ratio: '50' },
+      { name: 'Variant A', ratio: '50' }
+    ]
+  };
+
+  // Get initial state from session storage or use defaults
+  const getInitialState = () => {
+    const sessionState = sessionStorage.getItem('powerAnalysisState');
+    if (sessionState) {
+      return JSON.parse(sessionState);
+    }
+    return defaultValues;
+  };
+
+  // Initialize with session storage values or defaults
+  const [selectedMetric, setSelectedMetric] = useState<string>(getInitialState().selectedMetric);
+  const [alpha, setAlpha] = useState<AlphaValue>(getInitialState().alpha);
+  const [beta, setBeta] = useState<BetaValue>(getInitialState().beta);
+  const [mde, setMde] = useState<string>(getInitialState().mde);
+  const [customMde, setCustomMde] = useState<string>(getInitialState().customMde);
+  const [mdeType, setMdeType] = useState<'absolute' | 'percentage'>(getInitialState().mdeType);
+  const [testType, setTestType] = useState<TestType>(getInitialState().testType);
+  const [numPaths, setNumPaths] = useState<string>(getInitialState().numPaths);
+  const [customPaths, setCustomPaths] = useState<string>(getInitialState().customPaths);
   const [results, setResults] = useState<CalculationResults | null>(null);
   const [error, setError] = useState<string>('');
-  const [allocationRatios, setAllocationRatios] = useState<AllocationRatio[]>([
-    { name: 'Control', ratio: '50' },
-    { name: 'Variant A', ratio: '50' }
-  ]);
+  const [allocationRatios, setAllocationRatios] = useState<AllocationRatio[]>(getInitialState().allocationRatios);
   
   const resultsRef = useRef<HTMLDivElement>(null);
 
@@ -116,13 +188,122 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
 
   const [sortOrder, setSortOrder] = useState<SortOrder>({ direction: null });
 
+  // Save state to sessionStorage whenever values change
+  useEffect(() => {
+    const stateToSave = {
+      selectedMetric,
+      alpha,
+      beta,
+      mde,
+      customMde,
+      mdeType,
+      testType,
+      numPaths,
+      customPaths,
+      allocationRatios
+    };
+    sessionStorage.setItem('powerAnalysisState', JSON.stringify(stateToSave));
+
+    // Notify parent component of value changes for HypothesisTestingProposal sync
+    onValuesChanged({
+      mde: mde === 'custom' ? customMde : mde,
+      mdeType,
+      power: (1 - parseFloat(beta)).toString(),
+      significanceLevel: alpha,
+      selectedMetric,
+      variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
+    });
+  }, [selectedMetric, alpha, beta, mde, customMde, mdeType, testType, numPaths, customPaths, 
+      allocationRatios, onValuesChanged, csvData?.statistics]);
+
+  // Clear session storage on page unload
+  useEffect(() => {
+    const handleUnload = () => {
+      sessionStorage.removeItem('powerAnalysisState');
+    };
+
+    window.addEventListener('beforeunload', handleUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+    };
+  }, []);
+
+  const handleMetricSelect = (value: string) => {
+    setSelectedMetric(value);
+    const variance = csvData?.statistics?.[value]?.standardDeviation ** 2;
+    onValuesChanged({
+      mde: mde === 'custom' ? customMde : mde,
+      mdeType,
+      power: (1 - parseFloat(beta)).toString(),
+      significanceLevel: alpha,
+      selectedMetric: value,
+      variance: variance?.toString() || ''
+    });
+  };
+
   const handleMdeChange = (value: string) => {
     setMde(value);
     if (value !== 'custom') {
       setCustomMde('');
+      onValuesChanged({
+        mde: value,
+        mdeType,
+        power: (1 - parseFloat(beta)).toString(),
+        significanceLevel: alpha,
+        selectedMetric,
+        variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
+      });
     } else {
       setCustomMde(mde !== 'custom' ? mde : '');
     }
+  };
+
+  const handleCustomMdeChange = (value: string) => {
+    setCustomMde(value);
+    onValuesChanged({
+      mde: value,
+      mdeType,
+      power: (1 - parseFloat(beta)).toString(),
+      significanceLevel: alpha,
+      selectedMetric,
+      variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
+    });
+  };
+
+  const handleAlphaChange = (value: AlphaValue) => {
+    setAlpha(value);
+    onValuesChanged({
+      mde: mde === 'custom' ? customMde : mde,
+      mdeType,
+      power: (1 - parseFloat(beta)).toString(),
+      significanceLevel: value,
+      selectedMetric,
+      variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
+    });
+  };
+
+  const handleBetaChange = (value: BetaValue) => {
+    setBeta(value);
+    onValuesChanged({
+      mde: mde === 'custom' ? customMde : mde,
+      mdeType,
+      power: (1 - parseFloat(value)).toString(),
+      significanceLevel: alpha,
+      selectedMetric,
+      variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
+    });
+  };
+
+  const handleMdeTypeChange = (value: 'absolute' | 'percentage') => {
+    setMdeType(value);
+    onValuesChanged({
+      mde: mde === 'custom' ? customMde : mde,
+      mdeType: value,
+      power: (1 - parseFloat(beta)).toString(),
+      significanceLevel: alpha,
+      selectedMetric,
+      variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
+    });
   };
 
   const getEffectiveMde = () => {
@@ -230,12 +411,16 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
       setError('');
       const warnings: string[] = [];
       const effectiveMde = getEffectiveMde();
+      
+      // Validation checks
       if (!selectedMetric || !alpha || !beta || !effectiveMde) {
         throw new Error('Please fill in all required fields');
       }
 
-      if (Math.abs(getAllocationTotal() - 100) >= 0.01) {
-        throw new Error('Allocation ratios must sum to 100%');
+      // Check if allocation ratios sum to approximately 100%
+      const totalAllocation = getAllocationTotal();
+      if (Math.abs(totalAllocation - 100) > 0.01) {
+        throw new Error('Allocation ratios must sum to 100% (±0.01%)');
       }
 
       const stats = csvData?.statistics?.[selectedMetric];
@@ -278,37 +463,62 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
         absoluteMde = (parseFloat(effectiveMde) / 100) * mean;
       }
 
-      // Calculate base sample size (n_0)
+      // Calculate base sample size with Bonferroni correction
       const baseSampleSize = Math.ceil(
         2 * Math.pow(zAlpha + zBeta, 2) * variance / Math.pow(absoluteMde, 2)
       );
 
-      // Calculate VAF and adjusted sample sizes for all group comparisons
-      const comparisons: ComparisonResult[] = [];
+      // Calculate VAF for all pairs and find maximum
+      const vafResults: VAFResults = {
+        pairwiseComparisons: [],
+        maxVAF: 0,
+        maxVAFPair: '',
+        totalSampleSize: 0,
+        groupSampleSizes: new Map()
+      };
+
+      // Calculate VAF for each pair
       for (let i = 0; i < allocationRatios.length; i++) {
         for (let j = i + 1; j < allocationRatios.length; j++) {
           const ratio1 = parseFloat(allocationRatios[i].ratio) / 100;
           const ratio2 = parseFloat(allocationRatios[j].ratio) / 100;
           
-          // Calculate VAF for this comparison
-          const vaf = 1/ratio1 + 1/ratio2;
+          const vaf = calculateVAF(ratio1, ratio2);
           
-          // Calculate total sample size for this comparison
-          const totalSampleSize = Math.ceil(vaf * baseSampleSize);
-          
-          comparisons.push({
+          const comparison: ComparisonResult = {
             group1: allocationRatios[i].name,
             group2: allocationRatios[j].name,
             vaf: vaf,
-            totalSampleSize: totalSampleSize
-          });
+            group1SampleSize: 0, // Will be set after total sample size calculation
+            group2SampleSize: 0
+          };
+          
+          vafResults.pairwiseComparisons.push(comparison);
+          
+          if (vaf > vafResults.maxVAF) {
+            vafResults.maxVAF = vaf;
+            vafResults.maxVAFPair = `${allocationRatios[i].name} vs ${allocationRatios[j].name}`;
+          }
         }
       }
+
+      // Calculate total sample size using max VAF
+      vafResults.totalSampleSize = Math.ceil(baseSampleSize * (vafResults.maxVAF / VAF_EQUAL));
+
+      // Calculate individual group sample sizes
+      vafResults.groupSampleSizes = calculateGroupSampleSizes(vafResults.totalSampleSize, allocationRatios);
+
+      // Update comparison results with group sample sizes
+      vafResults.pairwiseComparisons = vafResults.pairwiseComparisons.map(comp => ({
+        ...comp,
+        group1SampleSize: vafResults.groupSampleSizes.get(comp.group1) || 0,
+        group2SampleSize: vafResults.groupSampleSizes.get(comp.group2) || 0
+      }));
 
       // Calculate relative MDE as percentage of mean
       const relativeMde = (absoluteMde / mean) * 100;
 
-      setResults({
+      const results: CalculationResults = {
         baseSampleSize,
         mean,
         stdDev,
@@ -318,26 +528,51 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
         zBeta,
         correctedAlpha,
         numComparisons,
-        comparisons,
-        warnings
-      });
+        comparisons: vafResults.pairwiseComparisons,
+        warnings,
+        vafResults,
+      };
+
+      setResults(results);
+      // Format variance to 4 decimal points before passing it up
+      onSampleSizeCalculated(vafResults.totalSampleSize.toString(), variance.toFixed(4));
     } catch (err: any) {
       setError(err.message);
+      console.error(err);
+      onSampleSizeCalculated('', '');
     }
   };
 
   const handleReset = () => {
-    setSelectedMetric('');
-    setAlpha('0.05');
-    setBeta('0.2');
-    setMde('5');
-    setCustomMde('');
-    setMdeType('percentage');
-    setTestType('two-tailed');
-    setNumPaths('2');
-    setCustomPaths('');
+    // Reset to default values
+    setSelectedMetric(defaultValues.selectedMetric);
+    setAlpha(defaultValues.alpha);
+    setBeta(defaultValues.beta);
+    setMde(defaultValues.mde);
+    setCustomMde(defaultValues.customMde);
+    setMdeType(defaultValues.mdeType);
+    setTestType(defaultValues.testType);
+    setNumPaths(defaultValues.numPaths);
+    setCustomPaths(defaultValues.customPaths);
     setResults(null);
     setError('');
+    setAllocationRatios(defaultValues.allocationRatios);
+    
+    // Clear session storage
+    sessionStorage.removeItem('powerAnalysisState');
+    
+    // Clear the calculated values
+    onSampleSizeCalculated('', '');
+    
+    // Notify parent of reset values
+    onValuesChanged({
+      mde: defaultValues.mde,
+      mdeType: defaultValues.mdeType,
+      power: (1 - parseFloat(defaultValues.beta)).toString(),
+      significanceLevel: defaultValues.alpha,
+      selectedMetric: defaultValues.selectedMetric,
+      variance: ''
+    });
   };
 
   const isFormValid = () => {
@@ -353,31 +588,30 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
     }, 100);
   };
 
+  const handleEqualSplit = () => {
+    const numGroups = allocationRatios.length;
+    const equalRatio = (100 / numGroups).toFixed(2);
+    const lastGroupRatio = (100 - (parseFloat(equalRatio) * (numGroups - 1))).toFixed(2);
+    
+    setAllocationRatios(allocationRatios.map((ratio, index) => ({
+      ...ratio,
+      ratio: index === numGroups - 1 ? lastGroupRatio : equalRatio
+    })));
+  };
+
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Typography variant="h6">Power Analysis Calculator</Typography>
-        <ButtonGroup>
-          <Button
-            startIcon={<RefreshIcon />}
-            onClick={calculateSampleSize}
-            disabled={!selectedMetric}
-            color="primary"
-            variant="contained"
-            size="small"
-          >
-            Re-run Analysis
-          </Button>
-          <Button
-            startIcon={<RestartAltIcon />}
-            onClick={handleReset}
-            color="secondary"
-            variant="outlined"
-            size="small"
-          >
-            Reset
-          </Button>
-        </ButtonGroup>
+        <Button
+          startIcon={<RestartAltIcon />}
+          onClick={handleReset}
+          color="secondary"
+          variant="outlined"
+          size="small"
+        >
+          Reset
+        </Button>
       </Box>
       
       {/* Metric Selection */}
@@ -395,7 +629,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
               </InputLabel>
               <Select
                 value={selectedMetric}
-                onChange={(e) => setSelectedMetric(e.target.value)}
+                onChange={(e) => handleMetricSelect(e.target.value)}
                 label="Primary Metric"
               >
                 {csvData?.columns?.map((column: string) => (
@@ -425,6 +659,14 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                   </IconButton>
                 </Tooltip>
               </Typography>
+              <Typography variant="body2">
+                Variance: {(csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toFixed(4)}
+                <Tooltip title="The square of standard deviation, another measure of variability">
+                  <IconButton size="small">
+                    <InfoIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Typography>
             </Grid>
           )}
         </Grid>
@@ -446,7 +688,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
               </InputLabel>
               <Select
                 value={alpha}
-                onChange={(e) => setAlpha(e.target.value as AlphaValue)}
+                onChange={(e) => handleAlphaChange(e.target.value as AlphaValue)}
                 label="Alpha (Significance Level)"
               >
                 {alphaOptions.map(option => (
@@ -469,7 +711,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
               </InputLabel>
               <Select
                 value={beta}
-                onChange={(e) => setBeta(e.target.value as BetaValue)}
+                onChange={(e) => handleBetaChange(e.target.value as BetaValue)}
                 label="Statistical Power (1-β)"
               >
                 {betaOptions.map(option => (
@@ -509,7 +751,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                 fullWidth
                 label="Custom MDE Value"
                 value={customMde}
-                onChange={(e) => setCustomMde(e.target.value)}
+                onChange={(e) => handleCustomMdeChange(e.target.value)}
                 type="number"
                 inputProps={{ step: 'any' }}
                 sx={{ mt: 2 }}
@@ -567,7 +809,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
               <RadioGroup
                 row
                 value={mdeType}
-                onChange={(e) => setMdeType(e.target.value as 'absolute' | 'percentage')}
+                onChange={(e) => handleMdeTypeChange(e.target.value as 'absolute' | 'percentage')}
               >
                 <FormControlLabel 
                   value="percentage" 
@@ -629,14 +871,8 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
           <Button
             size="small"
             variant="outlined"
-            onClick={() => {
-              const numGroups = allocationRatios.length;
-              const equalRatio = (100 / numGroups).toFixed(2);
-              setAllocationRatios(allocationRatios.map(ratio => ({
-                ...ratio,
-                ratio: equalRatio
-              })));
-            }}
+            onClick={handleEqualSplit}
+            startIcon={<RefreshIcon />}
             sx={{ mr: 1 }}
           >
             Equal Split
@@ -797,16 +1033,39 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                 ))}
               </Alert>
             )}
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            <Box sx={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center', 
+              mb: 2 
+            }}>
               <Typography variant="h6">Results</Typography>
-              <Button
-                startIcon={<RefreshIcon />}
-                onClick={calculateSampleSize}
-                color="primary"
-                size="small"
-              >
-                Recalculate
-              </Button>
+              <Box sx={{ 
+                border: '1px solid #e0e0e0', 
+                borderRadius: 1,
+                p: 1,
+                display: 'flex',
+                gap: 1
+              }}>
+                <Button
+                  startIcon={<RefreshIcon />}
+                  onClick={calculateSampleSize}
+                  color="primary"
+                  size="small"
+                  variant="contained"
+                >
+                  Recalculate
+                </Button>
+                <Button
+                  startIcon={<RestartAltIcon />}
+                  onClick={handleReset}
+                  color="secondary"
+                  size="small"
+                  variant="outlined"
+                >
+                  Reset
+                </Button>
+              </Box>
             </Box>
 
             {/* VAF and Sample Size Comparison Table */}
@@ -819,40 +1078,16 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                 <Typography variant="body2" color="text.secondary">
                   Base sample size (n₀): {results.baseSampleSize.toLocaleString()}
                 </Typography>
-                <ButtonGroup size="small">
-                  <Button
-                    startIcon={<ArrowUpward />}
-                    onClick={() => setSortOrder({ direction: 'asc' })}
-                    variant={sortOrder.direction === 'asc' ? 'contained' : 'outlined'}
-                  >
-                    Sort Ascending
-                  </Button>
-                  <Button
-                    startIcon={<ArrowDownward />}
-                    onClick={() => setSortOrder({ direction: 'desc' })}
-                    variant={sortOrder.direction === 'desc' ? 'contained' : 'outlined'}
-                  >
-                    Sort Descending
-                  </Button>
-                </ButtonGroup>
               </Box>
 
               <TableContainer>
-                <Table size="small">
+                <Table size="small" sx={{ width: 'auto', minWidth: '400px', maxWidth: '600px' }}>
                   <TableHead>
                     <TableRow>
-                      <TableCell>Group Comparison</TableCell>
-                      <TableCell align="right">
+                      <TableCell sx={{ width: '60%' }}>Group Comparison</TableCell>
+                      <TableCell align="right" sx={{ width: '40%' }}>
                         VAF
                         <Tooltip title="Variance Adjustment Factor - a number that adjusts sample size based on how you split traffic. Unequal splits (like 70-30) need more users than equal splits (50-50) to get reliable results.">
-                          <IconButton size="small">
-                            <InfoIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      </TableCell>
-                      <TableCell align="right">
-                        Required Total Sample Size
-                        <Tooltip title="The minimum total number of users you need for this comparison to detect your desired effect size reliably.">
                           <IconButton size="small">
                             <InfoIcon fontSize="small" />
                           </IconButton>
@@ -861,35 +1096,46 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {[...results.comparisons]
-                      .sort((a, b) => {
-                        if (sortOrder.direction === 'asc') {
-                          return a.totalSampleSize - b.totalSampleSize;
-                        } else if (sortOrder.direction === 'desc') {
-                          return b.totalSampleSize - a.totalSampleSize;
-                        }
-                        return 0;
-                      })
-                      .map((comparison, index) => (
-                        <TableRow 
-                          key={index}
-                          sx={{
-                            backgroundColor: index === 0 && sortOrder.direction === 'desc' ? 'rgba(0, 0, 0, 0.04)' : 'inherit'
-                          }}
-                        >
-                          <TableCell>{comparison.group1} vs {comparison.group2}</TableCell>
-                          <TableCell align="right">{comparison.vaf.toFixed(4)}</TableCell>
-                          <TableCell align="right">{comparison.totalSampleSize.toLocaleString()}</TableCell>
-                        </TableRow>
-                      ))
-                    }
+                    {results.vafResults.pairwiseComparisons.map((comparison, index) => (
+                      <TableRow 
+                        key={index}
+                        sx={{
+                          backgroundColor: comparison.vaf === results.vafResults.maxVAF ? 'rgba(0, 0, 0, 0.04)' : 'inherit'
+                        }}
+                      >
+                        <TableCell sx={{ width: '60%' }}>{comparison.group1} vs {comparison.group2}</TableCell>
+                        <TableCell align="right" sx={{ width: '40%' }}>{comparison.vaf.toFixed(4)}</TableCell>
+                      </TableRow>
+                    ))}
                   </TableBody>
                 </Table>
               </TableContainer>
 
+              <Box sx={{ mt: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1 }}>
+                <Typography variant="h6" gutterBottom>
+                  Final Sample Size Results
+                </Typography>
+                <Typography variant="body1" sx={{ mb: 1 }}>
+                  Maximum VAF: {results.vafResults.maxVAF.toFixed(4)} ({results.vafResults.maxVAFPair})
+                </Typography>
+                <Typography variant="body1" sx={{ mb: 1 }}>
+                  Total Required Sample Size: {results.vafResults.totalSampleSize.toLocaleString()}
+                </Typography>
+                <Typography variant="subtitle1" sx={{ mt: 2, mb: 1 }}>
+                  Sample Size per Group:
+                </Typography>
+                <Box sx={{ pl: 2 }}>
+                  {Array.from(results.vafResults.groupSampleSizes.entries()).map(([group, size]) => (
+                    <Typography key={group} variant="body2" sx={{ mb: 1 }}>
+                      {group}: {size.toLocaleString()} samples ({((size / results.vafResults.totalSampleSize) * 100).toFixed(2)}%)
+                    </Typography>
+                  ))}
+                </Box>
+              </Box>
+
               <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-                Note: {sortOrder.direction === 'desc' ? 'The highlighted row shows' : 'The largest total sample size represents'} the minimum sample size needed to achieve 
-                the desired statistical power for all group comparisons.
+                Note: The highlighted row shows the comparison with the maximum VAF, which determines the total sample size requirement.
+                Sample sizes are calculated using the Bonferroni-corrected base sample size and adjusted for the allocation ratios.
               </Typography>
             </Box>
 
@@ -961,7 +1207,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                         minWidth: '240px',
                         textAlign: 'center'
                       }}>
-                        2σ² × (Z<sub>{testType === 'one-tailed' ? '1-α' : '1-α/2'}</sub> + Z<sub>1-β</sub>)²
+                        2σ² × (Z<sub>α</sub> + Z<sub>β</sub>)²
                       </Box>
                       <Box className="fraction-line" sx={{ 
                         width: '100%',
@@ -991,8 +1237,8 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                     </Typography>
 
                     <Typography sx={{ mb: 1, fontFamily: 'inherit' }}>
-                      σ  = {results.stdDev.toFixed(4)}
-                      <Box component="span" sx={{ color: 'text.secondary' }}> (standard deviation in 
+                      σ² = {(results.stdDev * results.stdDev).toFixed(4)}
+                      <Box component="span" sx={{ color: 'text.secondary' }}> (variance in 
                         <Box component="span" sx={{ fontWeight: 600, color: 'text.primary', opacity: 0.9 }}> {selectedMetric} units</Box>)
                       </Box>
                     </Typography>
@@ -1005,7 +1251,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                     </Typography>
 
                     <Typography sx={{ mb: 1, fontFamily: 'inherit' }}>
-                      Z<sub>{testType === 'one-tailed' ? '1-α' : '1-α/2'}</sub> = {results.zAlpha.toFixed(4)}
+                      Z<sub>α</sub> = {results.zAlpha.toFixed(4)}
                       <Box component="span" sx={{ color: 'text.secondary' }}> 
                         (Z-score for {(results.correctedAlpha * 100).toFixed(3)}% significance level
                         {testType === 'two-tailed' ? ' (two-tailed)' : ''}, 
@@ -1014,7 +1260,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                     </Typography>
 
                     <Typography sx={{ mb: 3, fontFamily: 'inherit' }}>
-                      Z<sub>1-β</sub> = {results.zBeta.toFixed(4)}
+                      Z<sub>β</sub> = {results.zBeta.toFixed(4)}
                       <Box component="span" sx={{ color: 'text.secondary' }}> (Z-score for {((1 - parseFloat(beta)) * 100).toFixed(0)}% power level)</Box>
                     </Typography>
                   </Box>
@@ -1022,23 +1268,40 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                   {/* Sample Size Requirements */}
                   <Divider sx={{ mb: 2 }} />
                   <Typography variant="subtitle2" gutterBottom sx={{ mb: 2, fontWeight: 'bold' }}>
-                    Sample Size Requirements:
+                    Sample Size Calculation for Unequal Splits:
                   </Typography>
                   <Box sx={{ pl: 2 }}>
-                    <Typography sx={{ fontFamily: 'inherit' }}>
-                      Base sample size (n₀) = {results.baseSampleSize.toLocaleString()}
-                    </Typography>
-                    <Typography sx={{ fontFamily: 'inherit', mt: 1 }}>
-                      For each comparison between groups:
-                    </Typography>
-                    <Typography sx={{ fontFamily: 'inherit', ml: 2 }}>
-                      VAF<sub>ij</sub> = 1/r<sub>i</sub> + 1/r<sub>j</sub>
-                    </Typography>
-                    <Typography sx={{ fontFamily: 'inherit', ml: 2 }}>
-                      n<sub>total</sub> = VAF<sub>ij</sub> × n₀
-                    </Typography>
+                    <Box sx={{ 
+                      display: 'flex',
+                      alignItems: 'center',
+                      ml: 2,
+                      fontFamily: 'inherit'
+                    }}>
+                      <Typography sx={{ fontFamily: 'inherit' }}>
+                        n<sub>total</sub> = n₀ × 
+                      </Typography>
+                      <Box sx={{ 
+                        display: 'inline-flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        mx: 1
+                      }}>
+                        <Typography sx={{ fontFamily: 'inherit' }}>
+                          {results.vafResults.maxVAF.toFixed(4)}
+                        </Typography>
+                        <Box sx={{ 
+                          width: '100%',
+                          height: '1px',
+                          bgcolor: 'text.primary',
+                          my: 0.5
+                        }} />
+                        <Typography sx={{ fontFamily: 'inherit' }}>
+                          4
+                        </Typography>
+                      </Box>
+                    </Box>
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-                      where i and j represent the groups being compared
+                      where {results.vafResults.maxVAF.toFixed(4)} is the maximum VAF from {results.vafResults.maxVAFPair}
                     </Typography>
                   </Box>
                 </Box>

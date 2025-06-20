@@ -1,0 +1,763 @@
+import React, { useState, useEffect } from 'react';
+import {
+  Box,
+  TextField,
+  Typography,
+  Paper,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  Button,
+  Grid,
+  SelectChangeEvent,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  DialogContentText,
+  Alert,
+  Tooltip,
+  IconButton,
+} from '@mui/material';
+import InfoIcon from '@mui/icons-material/Info';
+import { styled } from '@mui/material/styles';
+import { Document, Packer, Paragraph, HeadingLevel, TextRun } from 'docx';
+import { saveAs } from 'file-saver';
+
+const StyledPaper = styled(Paper)(({ theme }) => ({
+  padding: theme.spacing(3),
+  margin: theme.spacing(2),
+  backgroundColor: '#fff',
+}));
+
+const SectionTitle = styled(Typography)(({ theme }) => ({
+  fontWeight: 'bold',
+  marginBottom: theme.spacing(2),
+  marginTop: theme.spacing(2),
+}));
+
+interface ProposalData {
+  title: string;
+  architects: string;
+  date: string;
+  businessProblem: string;
+  whyThisMatters: string;
+  quantifyImpact: string;
+  potentialBenefit: string;
+  previousWork: string;
+  researchQuestion: string;
+  nullHypothesis: string;
+  alternativeHypothesis: string;
+  studyType: string;
+  targetPopulation: string;
+  samplingStrategy: string;
+  eda: string;
+  mde: string;
+  power: string;
+  significanceLevel: string;
+  standardDeviation: string;
+  sampleSize: string;
+  usersPerDay: string;
+  expectedDays: string;
+  primaryMetrics: string;
+  secondaryMetrics: string;
+  guardrailMetrics: string;
+  potentialRisks: string;
+  sanityChecks: string;
+  statisticalTests: string;
+  segments: string;
+  fwerCorrection: string;
+  comments: string;
+}
+
+interface HypothesisTestingProposalProps {
+  calculatedSampleSize: string;
+  calculatedVariance: string;
+  powerAnalysisValues: {
+    mde: string;
+    mdeType: 'absolute' | 'percentage';
+    power: string;
+    significanceLevel: string;
+    selectedMetric: string;
+    variance: string;
+  };
+}
+
+const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({ 
+  calculatedSampleSize,
+  calculatedVariance,
+  powerAnalysisValues
+}) => {
+  // Default values
+  const defaultValues = {
+    title: '',
+    architects: '',
+    date: new Date().toISOString().split('T')[0],
+    businessProblem: '',
+    whyThisMatters: '',
+    quantifyImpact: '',
+    potentialBenefit: '',
+    previousWork: '',
+    researchQuestion: '',
+    nullHypothesis: '',
+    alternativeHypothesis: '',
+    studyType: '',
+    targetPopulation: '',
+    samplingStrategy: '',
+    eda: '',
+    mde: '5',
+    power: '0.8',
+    significanceLevel: '0.05',
+    standardDeviation: '',
+    sampleSize: '',
+    usersPerDay: '',
+    expectedDays: '',
+    primaryMetrics: '',
+    secondaryMetrics: '',
+    guardrailMetrics: '',
+    potentialRisks: '',
+    sanityChecks: '',
+    statisticalTests: '',
+    segments: '',
+    fwerCorrection: 'Bonferroni Correction',
+    comments: '',
+  };
+
+  // Use sessionStorage to persist during tab switches but clear on page reload
+  const getInitialState = () => {
+    const sessionState = sessionStorage.getItem('hypothesisProposalData');
+    if (sessionState) {
+      const parsedState = JSON.parse(sessionState);
+      return {
+        ...defaultValues,
+        ...parsedState
+      };
+    }
+    return defaultValues;
+  };
+
+  const [proposalData, setProposalData] = useState<ProposalData>(getInitialState());
+
+  const [openDialog, setOpenDialog] = useState(false);
+  const [emptyFields, setEmptyFields] = useState<string[]>([]);
+
+  // Update values when PowerAnalysis values change
+  useEffect(() => {
+    if (powerAnalysisValues) {
+      const effectiveMde = powerAnalysisValues.mde || '5';
+      const effectivePower = powerAnalysisValues.power || '0.8';
+      const effectiveSignificanceLevel = powerAnalysisValues.significanceLevel || '0.05';
+      
+      setProposalData(prev => {
+        const newData = {
+          ...prev,
+          mde: effectiveMde,
+          power: effectivePower,
+          significanceLevel: effectiveSignificanceLevel,
+          primaryMetrics: powerAnalysisValues.selectedMetric || prev.primaryMetrics,
+          standardDeviation: calculatedVariance ? Math.sqrt(parseFloat(calculatedVariance)).toFixed(4) : prev.standardDeviation,
+          sampleSize: calculatedSampleSize || prev.sampleSize
+        };
+
+        // Save to sessionStorage
+        sessionStorage.setItem('hypothesisProposalData', JSON.stringify(newData));
+        return newData;
+      });
+    }
+  }, [powerAnalysisValues, calculatedSampleSize, calculatedVariance]);
+
+  // Clear sessionStorage on unmount
+  useEffect(() => {
+    return () => {
+      sessionStorage.removeItem('hypothesisProposalData');
+    };
+  }, []);
+
+  const handleChange = (field: keyof ProposalData) => (
+    event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement> | SelectChangeEvent
+  ) => {
+    const newValue = event.target.value;
+    setProposalData(prev => {
+      const newData = { ...prev, [field]: newValue };
+      
+      // Calculate expected days when users per day changes
+      if (field === 'usersPerDay' && newValue && prev.sampleSize) {
+        const usersPerDay = parseFloat(newValue);
+        const sampleSize = parseFloat(prev.sampleSize);
+        if (!isNaN(usersPerDay) && !isNaN(sampleSize) && usersPerDay > 0) {
+          newData.expectedDays = Math.ceil(sampleSize / usersPerDay).toString();
+        }
+      }
+      
+      return newData;
+    });
+  };
+
+  const handleExportConfirmation = () => {
+    // Check for empty fields
+    const empty = Object.entries(proposalData).reduce((acc: string[], [key, value]) => {
+      if (!value || value.trim() === '') {
+        // Convert camelCase to Title Case for display
+        const fieldName = key.replace(/([A-Z])/g, ' $1')
+          .replace(/^./, str => str.toUpperCase());
+        acc.push(fieldName);
+      }
+      return acc;
+    }, []);
+
+    if (empty.length > 0) {
+      setEmptyFields(empty);
+      setOpenDialog(true);
+    } else {
+      // If no empty fields, export directly
+      performExport();
+    }
+  };
+
+  const handleDialogClose = () => {
+    setOpenDialog(false);
+  };
+
+  const performExport = () => {
+    // Create sections for the Word document
+    const sections = [
+      {
+        title: 'Hypothesis Testing Proposal',
+        content: [
+          { label: 'Experiment/Analysis Title', value: proposalData.title },
+          { label: 'Experiment Architects', value: proposalData.architects },
+          { label: 'Date', value: proposalData.date }
+        ]
+      },
+      {
+        title: '1. Business Context',
+        content: [
+          { label: 'Business Problem', value: proposalData.businessProblem },
+          { label: 'Why This Matters', value: proposalData.whyThisMatters },
+          { label: 'Quantify the Impact', value: proposalData.quantifyImpact },
+          { label: 'Potential Benefit', value: proposalData.potentialBenefit },
+          { label: 'Previous Work/Findings', value: proposalData.previousWork }
+        ]
+      },
+      {
+        title: '2. Research Question and Hypotheses',
+        content: [
+          { label: 'Research Question', value: proposalData.researchQuestion },
+          { label: 'Null Hypothesis (H0)', value: proposalData.nullHypothesis },
+          { label: 'Alternative Hypothesis (H1)', value: proposalData.alternativeHypothesis }
+        ]
+      },
+      {
+        title: '3. Study Design',
+        content: [
+          { label: 'Type of Study', value: proposalData.studyType },
+          { label: 'Target Population', value: proposalData.targetPopulation },
+          { label: 'Sampling Strategy', value: proposalData.samplingStrategy },
+          { label: 'Exploratory Data Analysis (EDA)', value: proposalData.eda }
+        ]
+      },
+      {
+        title: '4. Sample Size and Power Analysis',
+        content: [
+          { label: 'Minimum Detectable Effect (MDE)', value: proposalData.mde + '%' },
+          { label: 'Statistical Power', value: proposalData.power },
+          { label: 'Significance Level (α)', value: proposalData.significanceLevel },
+          { label: 'Standard Deviation', value: proposalData.standardDeviation },
+          { label: 'Total Required Sample Size', value: proposalData.sampleSize },
+          { label: 'Average Users Per Day', value: proposalData.usersPerDay },
+          { label: 'Expected Days to Reach Sample Size', value: proposalData.expectedDays + ' days' },
+          { label: 'Sample Size Summary', value: proposalData.usersPerDay && proposalData.sampleSize ? 
+            `With an average of ${proposalData.usersPerDay} users per day and a sample size of ${proposalData.sampleSize}, we expect to reach the required sample size in ${proposalData.expectedDays} days.` : 
+            'Not calculated' }
+        ]
+      },
+      {
+        title: '5. Statistical Analysis Plan',
+        content: [
+          { label: 'Primary Metric(s)', value: proposalData.primaryMetrics },
+          { label: 'Secondary Metric(s)', value: proposalData.secondaryMetrics },
+          { label: 'Guardrail Metric(s)', value: proposalData.guardrailMetrics },
+          { label: 'Sanity Check Metric(s)', value: proposalData.sanityChecks },
+          { label: 'Statistical Test(s)', value: proposalData.statisticalTests },
+          { label: 'Potential Risks', value: proposalData.potentialRisks }
+        ]
+      },
+      {
+        title: '6. Segmentation and Multiple Comparisons',
+        content: [
+          { label: 'Potential Segments', value: proposalData.segments },
+          { label: 'FWER Correction Method', value: proposalData.fwerCorrection }
+        ]
+      },
+    ];
+
+    // Create the document
+    const doc = new Document({
+      sections: [{
+        properties: {},
+        children: [
+          // Title
+          new Paragraph({
+            text: "Hypothesis Testing Proposal",
+            heading: HeadingLevel.TITLE,
+            spacing: {
+              after: 400
+            }
+          }),
+          
+          // Generate content for each section
+          ...sections.flatMap(section => [
+            // Section Title
+            new Paragraph({
+              text: section.title,
+              heading: HeadingLevel.HEADING_1,
+              spacing: {
+                before: 400,
+                after: 200
+              }
+            }),
+            
+            // Section Content
+            ...section.content.map(item => [
+              new Paragraph({
+                children: [
+                  new TextRun({
+                    text: `${item.label}: `,
+                    bold: true
+                  }),
+                  new TextRun({
+                    text: item.value || 'Not specified',
+                    bold: false
+                  })
+                ],
+                spacing: {
+                  before: 200,
+                  after: 200
+                }
+              })
+            ]).flat()
+          ]).flat()
+        ]
+      }]
+    });
+
+    // Generate and save the document
+    Packer.toBlob(doc).then(blob => {
+      saveAs(blob, 'hypothesis-testing-proposal.docx');
+      setOpenDialog(false);
+    });
+  };
+
+  return (
+    <Box sx={{ maxWidth: '1200px', margin: 'auto', padding: 2 }}>
+      <Typography variant="h4" gutterBottom>
+        Hypothesis Testing Proposal
+      </Typography>
+
+      <StyledPaper>
+        <Grid container spacing={3}>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              label="Experiment/Analysis Title"
+              value={proposalData.title}
+              onChange={handleChange('title')}
+            />
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <TextField
+              fullWidth
+              label="Experiment Architects"
+              value={proposalData.architects}
+              onChange={handleChange('architects')}
+            />
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <TextField
+              fullWidth
+              type="date"
+              label="Date"
+              value={proposalData.date}
+              onChange={handleChange('date')}
+              InputLabelProps={{ shrink: true }}
+            />
+          </Grid>
+        </Grid>
+      </StyledPaper>
+
+      <StyledPaper>
+        <SectionTitle variant="h6">1. Business Context</SectionTitle>
+        <Grid container spacing={3}>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              multiline
+              rows={3}
+              label="Business Problem"
+              value={proposalData.businessProblem}
+              onChange={handleChange('businessProblem')}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              multiline
+              rows={3}
+              label="Why This Matters"
+              value={proposalData.whyThisMatters}
+              onChange={handleChange('whyThisMatters')}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              multiline
+              rows={2}
+              label="Quantify the Impact"
+              value={proposalData.quantifyImpact}
+              onChange={handleChange('quantifyImpact')}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              multiline
+              rows={2}
+              label="Potential Benefit"
+              value={proposalData.potentialBenefit}
+              onChange={handleChange('potentialBenefit')}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              multiline
+              rows={3}
+              label="Previous Work/Findings"
+              value={proposalData.previousWork}
+              onChange={handleChange('previousWork')}
+            />
+          </Grid>
+        </Grid>
+      </StyledPaper>
+
+      <StyledPaper>
+        <SectionTitle variant="h6">2. Research Question and Hypotheses</SectionTitle>
+        <Grid container spacing={3}>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              multiline
+              rows={2}
+              label="Research Question"
+              value={proposalData.researchQuestion}
+              onChange={handleChange('researchQuestion')}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              multiline
+              rows={2}
+              label="Null Hypothesis (H0)"
+              value={proposalData.nullHypothesis}
+              onChange={handleChange('nullHypothesis')}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              multiline
+              rows={2}
+              label="Alternative Hypothesis (H1)"
+              value={proposalData.alternativeHypothesis}
+              onChange={handleChange('alternativeHypothesis')}
+            />
+          </Grid>
+        </Grid>
+      </StyledPaper>
+
+      <StyledPaper>
+        <SectionTitle variant="h6">3. Study Design</SectionTitle>
+        <Grid container spacing={3}>
+          <Grid item xs={12}>
+            <FormControl fullWidth>
+              <InputLabel>Type of Study</InputLabel>
+              <Select
+                value={proposalData.studyType}
+                onChange={handleChange('studyType')}
+                label="Type of Study"
+              >
+                <MenuItem value="A/B Test">A/B Test</MenuItem>
+                <MenuItem value="MAB">Multi-Armed Bandit (MAB)</MenuItem>
+                <MenuItem value="Factorial">Factorial Test</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              multiline
+              rows={2}
+              label="Target Population"
+              value={proposalData.targetPopulation}
+              onChange={handleChange('targetPopulation')}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              multiline
+              rows={2}
+              label="Sampling Strategy"
+              value={proposalData.samplingStrategy}
+              onChange={handleChange('samplingStrategy')}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              multiline
+              rows={3}
+              label="Exploratory Data Analysis (EDA)"
+              value={proposalData.eda}
+              onChange={handleChange('eda')}
+            />
+          </Grid>
+        </Grid>
+      </StyledPaper>
+
+      <StyledPaper>
+        <SectionTitle variant="h6">4. Sample Size and Power Analysis</SectionTitle>
+        <Grid container spacing={3}>
+          <Grid item xs={12} md={6}>
+            <TextField
+              fullWidth
+              label="Minimum Detectable Effect (MDE)"
+              value={proposalData.mde + '%'}
+              onChange={handleChange('mde')}
+              helperText={powerAnalysisValues?.mde 
+                ? `Value from Power Analysis: ${powerAnalysisValues.mde}${powerAnalysisValues.mdeType === 'percentage' ? '%' : ''}`
+                : "Default: 5%"}
+            />
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <TextField
+              fullWidth
+              label="Statistical Power"
+              value={proposalData.power}
+              onChange={handleChange('power')}
+              helperText={powerAnalysisValues?.power 
+                ? `Value from Power Analysis: ${powerAnalysisValues.power}`
+                : "Default: 0.8 (80%)"}
+            />
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <TextField
+              fullWidth
+              label="Significance Level (α)"
+              value={proposalData.significanceLevel}
+              onChange={handleChange('significanceLevel')}
+              helperText={powerAnalysisValues?.significanceLevel 
+                ? `Value from Power Analysis: ${powerAnalysisValues.significanceLevel}`
+                : "Default: 0.05 (5%)"}
+            />
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <TextField
+              fullWidth
+              label="Standard Deviation"
+              value={proposalData.standardDeviation}
+              onChange={handleChange('standardDeviation')}
+              helperText={calculatedVariance
+                ? `Value from Power Analysis: ${Math.sqrt(parseFloat(calculatedVariance)).toFixed(4)}`
+                : "Run Power Analysis to calculate"}
+              disabled // Make the field read-only
+            />
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <TextField
+              fullWidth
+              label="Total Required Sample Size"
+              value={proposalData.sampleSize}
+              onChange={handleChange('sampleSize')}
+              helperText={calculatedSampleSize 
+                ? `Value from Power Analysis: ${calculatedSampleSize}`
+                : "Run Power Analysis to calculate"}
+              disabled // Make the field read-only
+            />
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <TextField
+              fullWidth
+              label="Users Per Day"
+              value={proposalData.usersPerDay}
+              onChange={handleChange('usersPerDay')}
+              placeholder="e.g., 1200"
+              type="number"
+              helperText="Enter the average number of users per day"
+            />
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <TextField
+              fullWidth
+              label="Expected Days to Reach Sample Size"
+              value={proposalData.expectedDays}
+              InputProps={{
+                readOnly: true,
+              }}
+              helperText={
+                proposalData.usersPerDay && proposalData.sampleSize
+                  ? `With ${proposalData.usersPerDay} users per day and a sample size of ${proposalData.sampleSize}, we expect to reach the required sample size in ${proposalData.expectedDays} days.`
+                  : "Will be calculated based on Users Per Day and Sample Size"
+              }
+            />
+          </Grid>
+        </Grid>
+      </StyledPaper>
+
+      <StyledPaper>
+        <SectionTitle variant="h6">5. Statistical Analysis Plan</SectionTitle>
+        <Grid container spacing={3}>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              multiline
+              rows={2}
+              label="Primary Metric(s)"
+              value={proposalData.primaryMetrics}
+              onChange={handleChange('primaryMetrics')}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              multiline
+              rows={2}
+              label="Secondary Metric(s)"
+              value={proposalData.secondaryMetrics}
+              onChange={handleChange('secondaryMetrics')}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              multiline
+              rows={2}
+              label="Guardrail Metric(s)"
+              value={proposalData.guardrailMetrics}
+              onChange={handleChange('guardrailMetrics')}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              multiline
+              rows={3}
+              label="Sanity Check Metric(s)"
+              value={proposalData.sanityChecks}
+              onChange={handleChange('sanityChecks')}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              multiline
+              rows={2}
+              label="Statistical Test(s)"
+              value={proposalData.statisticalTests}
+              onChange={handleChange('statisticalTests')}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              multiline
+              rows={3}
+              label="Potential Risks"
+              value={proposalData.potentialRisks}
+              onChange={handleChange('potentialRisks')}
+            />
+          </Grid>
+        </Grid>
+      </StyledPaper>
+
+      <StyledPaper>
+        <SectionTitle variant="h6">6. Segmentation and Multiple Comparisons</SectionTitle>
+        <Grid container spacing={3}>
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              multiline
+              rows={3}
+              label="Potential Segments"
+              value={proposalData.segments}
+              onChange={handleChange('segments')}
+            />
+          </Grid>
+          <Grid item xs={12}>
+            <FormControl fullWidth>
+              <InputLabel>FWER Correction Method</InputLabel>
+              <Select
+                value={proposalData.fwerCorrection}
+                onChange={handleChange('fwerCorrection')}
+                label="FWER Correction Method"
+              >
+                <MenuItem value="Bonferroni Correction">Bonferroni Correction</MenuItem>
+                <MenuItem value="FDR">False Discovery Rate (FDR)</MenuItem>
+                <MenuItem value="None">None</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+        </Grid>
+      </StyledPaper>
+
+      <Box sx={{ mt: 3, mb: 3, display: 'flex', justifyContent: 'center' }}>
+        <Button
+          variant="contained"
+          color="primary"
+          onClick={handleExportConfirmation}
+          size="large"
+        >
+          Export Proposal
+        </Button>
+      </Box>
+
+      {/* Confirmation Dialog */}
+      <Dialog
+        open={openDialog}
+        onClose={handleDialogClose}
+        aria-labelledby="alert-dialog-title"
+        aria-describedby="alert-dialog-description"
+      >
+        <DialogTitle id="alert-dialog-title">
+          {"Incomplete Fields Detected"}
+        </DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            The following fields are empty:
+          </Alert>
+          <DialogContentText id="alert-dialog-description">
+            <ul>
+              {emptyFields.map((field, index) => (
+                <li key={index}>{field}</li>
+              ))}
+            </ul>
+            Would you like to export the proposal anyway?
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleDialogClose} color="primary">
+            Cancel
+          </Button>
+          <Button onClick={performExport} color="primary" autoFocus>
+            Export Anyway
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
+  );
+};
+
+export default HypothesisTestingProposal; 
