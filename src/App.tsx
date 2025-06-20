@@ -138,16 +138,45 @@ interface HeatmapCell {
 }
 
 function detectColumnType(values: (string | number | null)[]): 'numeric' | 'categorical' | 'date' {
-  const numericCount = values.filter(v => v !== null && !isNaN(Number(v))).length;
-  const dateCount = values.filter(v => v !== null && !isNaN(Date.parse(String(v)))).length;
+  // Handle edge cases
+  if (!values || values.length === 0) return 'categorical';
   
-  if (numericCount / values.length > 0.8) return 'numeric';
-  if (dateCount / values.length > 0.8) return 'date';
+  const nonNullValues = values.filter(v => v !== null && v !== '' && v !== undefined);
+  if (nonNullValues.length === 0) return 'categorical';
+  
+  const numericCount = nonNullValues.filter(v => 
+    !isNaN(Number(v)) && isFinite(Number(v))
+  ).length;
+  
+  const dateCount = nonNullValues.filter(v => {
+    const dateStr = String(v);
+    const parsed = Date.parse(dateStr);
+    return !isNaN(parsed) && isFinite(parsed);
+  }).length;
+  
+  const totalValidValues = nonNullValues.length;
+  
+  if (totalValidValues === 0) return 'categorical';
+  if (numericCount / totalValidValues > 0.8) return 'numeric';
+  if (dateCount / totalValidValues > 0.8) return 'date';
   return 'categorical';
 }
 
 function calculateStatistics(data: CSVValue[][], columnIndex: number): ColumnStatistics {
-  const values = data.map(row => row[columnIndex].value);
+  // Early return for invalid input
+  if (!data || data.length === 0 || !data[0] || columnIndex < 0 || columnIndex >= data[0].length) {
+    return {
+      type: 'categorical',
+      nullCount: 0,
+      missingCount: 0,
+      totalCount: 0,
+      completeness: 0,
+      uniqueValues: 0,
+      frequencies: {}
+    };
+  }
+
+  const values = data.map(row => row && row[columnIndex] ? row[columnIndex].value : null);
   const type = detectColumnType(values);
   
   const stats: ColumnStatistics = { 
@@ -160,48 +189,67 @@ function calculateStatistics(data: CSVValue[][], columnIndex: number): ColumnSta
   
   // Calculate completeness percentage
   const validValues = values.filter(val => val !== null && val !== '' && val !== undefined && val !== 'null');
-  stats.completeness = (validValues.length / values.length) * 100;
+  stats.completeness = values.length > 0 ? (validValues.length / values.length) * 100 : 0;
   
-  if (type === 'numeric') {
-    const numbers = validValues.map(Number).filter(n => !isNaN(n));
+  if (type === 'numeric' && validValues.length > 0) {
+    const numbers = validValues.map(Number).filter(n => !isNaN(n) && isFinite(n));
     const n = numbers.length;
     
-    // Basic statistics
-    stats.mean = numbers.reduce((a, b) => a + b, 0) / n;
-    const sortedNumbers = numbers.sort((a, b) => a - b);
-    stats.median = sortedNumbers[Math.floor(n / 2)];
-    stats.min = Math.min(...numbers);
-    stats.max = Math.max(...numbers);
-    
-    // Standard deviation
-    const variance = numbers.reduce((acc, val) => acc + Math.pow(val - stats.mean!, 2), 0) / n;
-    stats.standardDeviation = Math.sqrt(variance);
-    
-    // Skewness
-    const m3 = numbers.reduce((acc, val) => acc + Math.pow(val - stats.mean!, 3), 0) / n;
-    stats.skewness = m3 / Math.pow(stats.standardDeviation!, 3);
-    
-    // Kurtosis
-    const m4 = numbers.reduce((acc, val) => acc + Math.pow(val - stats.mean!, 4), 0) / n;
-    stats.kurtosis = (m4 / Math.pow(stats.standardDeviation!, 4)) - 3; // Excess kurtosis
-    
-    // Percentiles
-    stats.percentile25 = sortedNumbers[Math.floor(n * 0.25)];
-    stats.percentile75 = sortedNumbers[Math.floor(n * 0.75)];
+    if (n > 0) {
+      // Basic statistics
+      stats.mean = numbers.reduce((a, b) => a + b, 0) / n;
+      const sortedNumbers = numbers.sort((a, b) => a - b);
+      stats.median = sortedNumbers[Math.floor(n / 2)];
+      stats.min = Math.min(...numbers);
+      stats.max = Math.max(...numbers);
+      
+      // Standard deviation (avoid division by zero)
+      if (n > 1) {
+        const variance = numbers.reduce((acc, val) => acc + Math.pow(val - stats.mean!, 2), 0) / n;
+        stats.standardDeviation = Math.sqrt(variance);
+        
+        // Skewness and Kurtosis (avoid division by zero)
+        if (stats.standardDeviation > 0) {
+          const m3 = numbers.reduce((acc, val) => acc + Math.pow(val - stats.mean!, 3), 0) / n;
+          stats.skewness = m3 / Math.pow(stats.standardDeviation!, 3);
+          
+          const m4 = numbers.reduce((acc, val) => acc + Math.pow(val - stats.mean!, 4), 0) / n;
+          stats.kurtosis = (m4 / Math.pow(stats.standardDeviation!, 4)) - 3; // Excess kurtosis
+        } else {
+          stats.skewness = 0;
+          stats.kurtosis = 0;
+        }
+      } else {
+        stats.standardDeviation = 0;
+        stats.skewness = 0;
+        stats.kurtosis = 0;
+      }
+      
+      // Percentiles
+      stats.percentile25 = sortedNumbers[Math.floor(n * 0.25)];
+      stats.percentile75 = sortedNumbers[Math.floor(n * 0.75)];
+    }
   }
   
   // Calculate frequencies for all types
   const frequencies: Record<string, number> = {};
   validValues.forEach(val => {
-    frequencies[String(val)] = (frequencies[String(val)] || 0) + 1;
+    const key = String(val);
+    frequencies[key] = (frequencies[key] || 0) + 1;
   });
   stats.frequencies = frequencies;
   stats.uniqueValues = Object.keys(frequencies).length;
   
-  // Find mode
-  const mode = Object.entries(frequencies).reduce((a, b) => 
-    (frequencies[a[0]] > frequencies[b[0]] ? a : b))[0];
-  stats.mode = type === 'numeric' ? Number(mode) : mode;
+  // Find mode safely
+  if (Object.keys(frequencies).length > 0) {
+    const modeEntry = Object.entries(frequencies).reduce((a, b) => 
+      (frequencies[a[0]] > frequencies[b[0]] ? a : b)
+    );
+    const modeValue = modeEntry[0];
+    stats.mode = type === 'numeric' ? Number(modeValue) : modeValue;
+  } else {
+    stats.mode = undefined;
+  }
   
   return stats;
 }
@@ -953,47 +1001,94 @@ function App() {
     setIsProcessing(true);
     Papa.parse(file, {
       complete: (results) => {
-        const headers = results.data[0] as string[];
-        const rawData = results.data.slice(1) as string[][];
-        
-        const data: CSVValue[][] = rawData.map(row =>
-          row.map(cell => ({
-            value: cell === '' || cell === null ? null : isNaN(Number(cell)) ? cell : Number(cell)
-          }))
-        );
+        try {
+          // Validate results
+          if (!results.data || results.data.length === 0) {
+            console.error('No data found in CSV file');
+            setIsProcessing(false);
+            return;
+          }
 
-        const statistics: Record<string, ColumnStatistics> = {};
-        headers.forEach((_, index) => {
-          statistics[headers[index]] = calculateStatistics(data, index);
-        });
+          const headers = results.data[0] as string[];
+          const rawData = results.data.slice(1) as string[][];
+          
+          // Validate headers
+          if (!headers || headers.length === 0) {
+            console.error('No headers found in CSV file');
+            setIsProcessing(false);
+            return;
+          }
 
-        // First try to identify dependent metrics automatically
-        const autoDetectedMetrics = identifyDependentMetrics(headers);
-        
-        // Calculate both general and target-specific dependencies
-        const generalDependencies = findDependencies(data, headers, statistics);
-        const targetDependencies = autoDetectedMetrics.length > 0
-          ? findDependenciesWithTarget(data, headers, statistics, autoDetectedMetrics[0])
-          : [];
+          const data: CSVValue[][] = rawData
+            .filter(row => row && row.length > 0) // Filter out empty rows
+            .map(row =>
+              row.map(cell => ({
+                value: cell === '' || cell === null || cell === undefined ? null : 
+                       (isNaN(Number(cell)) ? cell : Number(cell))
+              }))
+            );
 
-        // Combine both types of dependencies
-        const allDependencies = [...generalDependencies, ...targetDependencies];
+          // Ensure all rows have the same number of columns as headers
+          const filteredData = data.filter(row => row.length === headers.length);
 
-        setCsvData({
-          rowCount: data.length,
-          columnCount: headers.length,
-          columns: headers,
-          data: data,
-          statistics: statistics,
-          dependencies: allDependencies,
-          dependentMetrics: autoDetectedMetrics
-        });
+          if (filteredData.length === 0) {
+            console.error('No valid data rows found');
+            setIsProcessing(false);
+            return;
+          }
 
-        // Reset selection state when loading new file
-        setSelectedDependentMetric('');
-        setManualMetricInput('');
-        setMetricError('');
-        setIsProcessing(false);
+          const statistics: Record<string, ColumnStatistics> = {};
+          headers.forEach((header, index) => {
+            if (header && typeof header === 'string') {
+              try {
+                statistics[header] = calculateStatistics(filteredData, index);
+              } catch (error) {
+                console.error(`Error calculating statistics for column ${header}:`, error);
+                // Provide fallback statistics
+                statistics[header] = {
+                  type: 'categorical',
+                  nullCount: 0,
+                  missingCount: 0,
+                  totalCount: 0,
+                  completeness: 0,
+                  uniqueValues: 0,
+                  frequencies: {}
+                };
+              }
+            }
+          });
+
+          // First try to identify dependent metrics automatically
+          const autoDetectedMetrics = identifyDependentMetrics(headers);
+          
+          // Calculate both general and target-specific dependencies
+          const generalDependencies = findDependencies(filteredData, headers, statistics);
+          const targetDependencies = autoDetectedMetrics.length > 0
+            ? findDependenciesWithTarget(filteredData, headers, statistics, autoDetectedMetrics[0])
+            : [];
+
+          // Combine both types of dependencies
+          const allDependencies = [...generalDependencies, ...targetDependencies];
+
+          setCsvData({
+            rowCount: filteredData.length,
+            columnCount: headers.length,
+            columns: headers,
+            data: filteredData,
+            statistics: statistics,
+            dependencies: allDependencies,
+            dependentMetrics: autoDetectedMetrics
+          });
+
+          // Reset selection state when loading new file
+          setSelectedDependentMetric('');
+          setManualMetricInput('');
+          setMetricError('');
+          setIsProcessing(false);
+        } catch (error) {
+          console.error('Error processing CSV data:', error);
+          setIsProcessing(false);
+        }
       },
       header: false,
       skipEmptyLines: true,
@@ -1111,6 +1206,11 @@ function App() {
         <>
           <Typography variant="h6" sx={{ mt: 3 }} gutterBottom>
             Dependent Metric Analysis
+            <Tooltip title="A dependent metric is the main outcome you want to measure in your analysis (like conversion rate, revenue, or user engagement). This helps us understand which other factors might influence this important metric.">
+              <IconButton size="small">
+                <InfoIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
           </Typography>
           {csvData.dependentMetrics.length > 0 ? (
             <Paper sx={{ p: 2, mb: 3 }}>
@@ -1130,17 +1230,59 @@ function App() {
       {/* Data Quality Overview Section */}
       {csvData && (
         <>
-          <Typography variant="h6" sx={{ mt: 3 }} gutterBottom>Data Quality Overview</Typography>
+          <Typography variant="h6" sx={{ mt: 3 }} gutterBottom>
+            Data Quality Overview
+            <Tooltip title="Shows how complete and reliable your data is. Good data quality is essential for accurate analysis results.">
+              <IconButton size="small">
+                <InfoIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Typography>
           <TableContainer component={Paper} sx={{ mb: 3 }}>
             <Table size="small">
               <TableHead>
                 <TableRow>
                   <TableCell>Column</TableCell>
-                  <TableCell>Type</TableCell>
-                  <TableCell>Completeness</TableCell>
-                  <TableCell>Missing Values</TableCell>
-                  <TableCell>Null Values</TableCell>
-                  <TableCell>Unique Values</TableCell>
+                  <TableCell>
+                    Type
+                    <Tooltip title="Numeric: numbers you can calculate with (like age, revenue). Categorical: text labels or categories (like country, product type). Date: dates and times.">
+                      <IconButton size="small">
+                        <InfoIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </TableCell>
+                  <TableCell>
+                    Completeness
+                    <Tooltip title="Percentage of rows that have valid data (not empty or missing). Higher is better - aim for above 90% for reliable analysis.">
+                      <IconButton size="small">
+                        <InfoIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </TableCell>
+                  <TableCell>
+                    Missing Values
+                    <Tooltip title="Empty cells in your data. Too many missing values can make your analysis less reliable.">
+                      <IconButton size="small">
+                        <InfoIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </TableCell>
+                  <TableCell>
+                    Null Values
+                    <Tooltip title="Cells that explicitly contain 'null' or similar empty indicators. Like missing values, these can affect your analysis quality.">
+                      <IconButton size="small">
+                        <InfoIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </TableCell>
+                  <TableCell>
+                    Unique Values
+                    <Tooltip title="How many different values appear in this column. High uniqueness might indicate IDs, while low uniqueness suggests categories.">
+                      <IconButton size="small">
+                        <InfoIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -1188,8 +1330,10 @@ function App() {
           <Typography variant="h6" sx={{ mt: 3 }} gutterBottom>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               Column Dependencies Analysis
-              <Tooltip title="Shows relationships between columns based on correlation (for numeric data) and categorical association (for categorical data)">
-                <Box component="span" sx={{ cursor: 'help' }}>ℹ️</Box>
+              <Tooltip title="This shows how columns in your data relate to each other. Think of it like finding connections - for example, if age tends to increase with income, or if certain products are often bought together. Strong relationships can help you understand your data better.">
+                <IconButton size="small" sx={{ cursor: 'help' }}>
+                  <InfoIcon fontSize="small" />
+                </IconButton>
               </Tooltip>
             </Box>
           </Typography>
@@ -1222,8 +1366,10 @@ function App() {
                       <TableCell>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                           <Typography>{`${dep.column1} ↔ ${dep.column2}`}</Typography>
-                          <Tooltip title="These columns show a significant relationship">
-                            <Box component="span" sx={{ cursor: 'help' }}>ℹ️</Box>
+                          <Tooltip title="These two columns have a meaningful connection - when one changes, the other tends to change in a predictable way.">
+                            <IconButton size="small">
+                              <InfoIcon fontSize="small" />
+                            </IconButton>
                           </Tooltip>
                         </Box>
                       </TableCell>
@@ -1234,10 +1380,12 @@ function App() {
                           </Typography>
                           <Tooltip title={
                             dep.type === 'correlation' 
-                              ? "Pearson correlation coefficient - measures linear relationship between numeric columns"
-                              : "Cramer's V - measures association between categorical columns"
+                              ? "Correlation: Shows if two number columns move together. Like height and weight - as one increases, the other tends to increase too."
+                              : "Categorical Association: Shows if two category columns are connected. Like if people who buy coffee also tend to buy pastries."
                           }>
-                            <Box component="span" sx={{ cursor: 'help' }}>ℹ️</Box>
+                            <IconButton size="small">
+                              <InfoIcon fontSize="small" />
+                            </IconButton>
                           </Tooltip>
                         </Box>
                       </TableCell>
@@ -1346,36 +1494,85 @@ function App() {
                   <>
                     <Typography variant="subtitle2" sx={{ mt: 1, mb: 0.5, color: 'primary.main' }}>
                       Central Tendency:
-                      <Tooltip title="Measures of central location in the data">
+                      <Tooltip title="These tell you what's 'typical' or 'normal' in your data - like finding the center point of all your values.">
                         <IconButton size="small">
                           <InfoIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
                     </Typography>
                     <Box sx={{ pl: 2, mb: 2 }}>
-                      <Typography>Mean: <strong>{stats.mean?.toFixed(2)}</strong></Typography>
-                      <Typography>Median: <strong>{stats.median?.toFixed(2)}</strong></Typography>
-                      <Typography>Mode: <strong>{stats.mode}</strong></Typography>
+                      <Typography>
+                        Mean: <strong>{stats.mean?.toFixed(2)}</strong>
+                        <Tooltip title="The average - add up all values and divide by how many you have. Can be affected by very high or low values.">
+                          <IconButton size="small">
+                            <InfoIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Typography>
+                      <Typography>
+                        Median: <strong>{stats.median?.toFixed(2)}</strong>
+                        <Tooltip title="The middle value when you sort all values from lowest to highest. Less affected by extreme values than the mean.">
+                          <IconButton size="small">
+                            <InfoIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Typography>
+                      <Typography>
+                        Mode: <strong>{stats.mode}</strong>
+                        <Tooltip title="The most common value that appears most frequently in your data.">
+                          <IconButton size="small">
+                            <InfoIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Typography>
                     </Box>
                     
                     <Typography variant="subtitle2" sx={{ mt: 1, mb: 0.5, color: 'primary.main' }}>
                       Range & Percentiles:
-                      <Tooltip title="Distribution boundaries and quartile values">
+                      <Tooltip title="Shows the spread of your data - from the smallest to largest values, and key points in between.">
                         <IconButton size="small">
                           <InfoIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
                     </Typography>
                     <Box sx={{ pl: 2, mb: 2 }}>
-                      <Typography>Minimum: <strong>{stats.min?.toFixed(2)}</strong></Typography>
-                      <Typography>Maximum: <strong>{stats.max?.toFixed(2)}</strong></Typography>
-                      <Typography>25th Percentile (Q1): <strong>{stats.percentile25?.toFixed(2)}</strong></Typography>
-                      <Typography>75th Percentile (Q3): <strong>{stats.percentile75?.toFixed(2)}</strong></Typography>
+                      <Typography>
+                        Minimum: <strong>{stats.min?.toFixed(2)}</strong>
+                        <Tooltip title="The smallest value in your data.">
+                          <IconButton size="small">
+                            <InfoIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Typography>
+                      <Typography>
+                        Maximum: <strong>{stats.max?.toFixed(2)}</strong>
+                        <Tooltip title="The largest value in your data.">
+                          <IconButton size="small">
+                            <InfoIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Typography>
+                      <Typography>
+                        25th Percentile (Q1): <strong>{stats.percentile25?.toFixed(2)}</strong>
+                        <Tooltip title="25% of your data falls below this value. It's like saying 'most values are above this point.'">
+                          <IconButton size="small">
+                            <InfoIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Typography>
+                      <Typography>
+                        75th Percentile (Q3): <strong>{stats.percentile75?.toFixed(2)}</strong>
+                        <Tooltip title="75% of your data falls below this value. It's like saying 'most values are below this point.'">
+                          <IconButton size="small">
+                            <InfoIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Typography>
                     </Box>
                     
                     <Typography variant="subtitle2" sx={{ mt: 1, mb: 0.5, color: 'primary.main' }}>
                       Distribution Shape:
-                      <Tooltip title="Metrics describing the shape and spread of the distribution">
+                      <Tooltip title="These describe how your data is spread out and shaped - like whether it's evenly distributed or bunched up in certain areas.">
                         <IconButton size="small">
                           <InfoIcon fontSize="small" />
                         </IconButton>
@@ -1384,7 +1581,7 @@ function App() {
                     <Box sx={{ pl: 2 }}>
                       <Typography>
                         Standard Deviation: <strong>{stats.standardDeviation?.toFixed(2)}</strong>
-                        <Tooltip title="Measures the average deviation from the mean">
+                        <Tooltip title="Shows how spread out your data is. A small number means most values are close to the average. A large number means values are more spread out.">
                           <IconButton size="small">
                             <InfoIcon fontSize="small" />
                           </IconButton>
@@ -1392,7 +1589,7 @@ function App() {
                       </Typography>
                       <Typography>
                         Skewness: <strong>{stats.skewness?.toFixed(2)}</strong>
-                        <Tooltip title="Measures asymmetry of the distribution. Positive values indicate right skew, negative values indicate left skew">
+                        <Tooltip title="Shows if your data leans to one side. 0 = perfectly balanced, positive = more values on the left (tail extends right), negative = more values on the right (tail extends left).">
                           <IconButton size="small">
                             <InfoIcon fontSize="small" />
                           </IconButton>
@@ -1400,7 +1597,7 @@ function App() {
                       </Typography>
                       <Typography>
                         Kurtosis: <strong>{stats.kurtosis?.toFixed(2)}</strong>
-                        <Tooltip title="Measures the 'tailedness' of the distribution. Higher values indicate heavier tails">
+                        <Tooltip title="Shows if your data has a sharp peak or flat top. 0 = normal bell curve, positive = sharper peak with heavier tails, negative = flatter peak.">
                           <IconButton size="small">
                             <InfoIcon fontSize="small" />
                           </IconButton>
@@ -1411,7 +1608,14 @@ function App() {
                 )}
                 {stats.type === 'categorical' && (
                   <>
-                    <Typography>Mode (Most Common Value): {stats.mode}</Typography>
+                    <Typography>
+                      Mode (Most Common Value): {stats.mode}
+                      <Tooltip title="The value that appears most frequently in this column.">
+                        <IconButton size="small">
+                          <InfoIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Typography>
                     <Typography>Top 5 Most Common Values:</Typography>
                     <TableContainer component={Paper} variant="outlined" sx={{ mt: 1 }}>
                       <Table size="small">
@@ -1451,7 +1655,14 @@ function App() {
   const renderDistributionsTab = () => {
     return (
       <Box>
-        <Typography variant="h5" gutterBottom>Distribution Analysis</Typography>
+        <Typography variant="h5" gutterBottom>
+          Distribution Analysis
+          <Tooltip title="These charts show how your data values are spread out - whether they're evenly distributed, clustered together, or have outliers.">
+            <IconButton size="small">
+              <InfoIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Typography>
         
         {csvData?.columns.map((column, index) => {
           const stats = csvData.statistics[column];
@@ -1473,7 +1684,7 @@ function App() {
                 <Paper key={index} sx={{ p: 4, mb: 4 }}>
                   <Typography variant="subtitle1" gutterBottom>
                     {column} Distribution
-                    <Tooltip title="Shows the distribution of values using quartiles. The box represents Q1 to Q3, the line inside is the median, whiskers show min/max, and dots are outliers.">
+                    <Tooltip title="This box plot shows how your values are spread out. The box shows where most of your data falls (middle 50%), the line inside is the typical value (median), and the lines extending out show the full range. Dots are unusual values (outliers).">
                       <IconButton size="small">
                         <InfoIcon fontSize="small" />
                       </IconButton>
@@ -1775,7 +1986,14 @@ function App() {
 
     return (
       <Box>
-        <Typography variant="h5" gutterBottom>Correlation Analysis</Typography>
+        <Typography variant="h5" gutterBottom>
+          Correlation Analysis
+          <Tooltip title="Correlation analysis helps you understand which columns in your data are related. Strong correlations can reveal important patterns and relationships.">
+            <IconButton size="small">
+              <InfoIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Typography>
         
         {csvData.dependentMetrics.length > 0 && (
           <Alert severity="info" sx={{ mb: 3 }}>
@@ -1785,8 +2003,8 @@ function App() {
 
         <Paper sx={{ p: 2, mb: 3 }}>
           <Typography variant="h6" gutterBottom>
-            Correlation Heatmap
-            <Tooltip title="Shows correlations between all numeric columns. Blue diagonal shows perfect self-correlation. Green shows positive correlations, red shows negative correlations. Intensity indicates correlation strength.">
+            Correlation Heatmap  
+            <Tooltip title="This chart shows how your numeric columns relate to each other. Blue squares = strong relationship, white = no relationship. The diagonal line shows each column perfectly relates to itself.">
               <IconButton size="small">
                 <InfoIcon fontSize="small" />
               </IconButton>
@@ -1805,7 +2023,7 @@ function App() {
 
         <Typography variant="h6" gutterBottom sx={{ mt: 4 }}>
           Detailed Correlation Analysis
-          <Tooltip title="Showing correlations stronger than ±0.3. Scatter plots help visualize the relationship between pairs of variables.">
+          <Tooltip title="These scatter plots show relationships between columns where there's a meaningful connection (above 30% correlation). Each dot represents one row of your data.">
             <IconButton size="small">
               <InfoIcon fontSize="small" />
             </IconButton>

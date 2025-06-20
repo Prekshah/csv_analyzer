@@ -385,7 +385,14 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
         <Grid container spacing={3}>
           <Grid item xs={12}>
             <FormControl fullWidth>
-              <InputLabel>Primary Metric</InputLabel>
+              <InputLabel>
+                Primary Metric
+                <Tooltip title="This is the main measurement you want to analyze in your experiment - like conversion rate, revenue per user, or time spent on page.">
+                  <IconButton size="small">
+                    <InfoIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </InputLabel>
               <Select
                 value={selectedMetric}
                 onChange={(e) => setSelectedMetric(e.target.value)}
@@ -404,7 +411,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
             <Grid item xs={12}>
               <Typography variant="body2">
                 Mean: {csvData?.statistics?.[selectedMetric]?.mean?.toFixed(4)}
-                <Tooltip title="The average value of your metric">
+                <Tooltip title="The average value in your data. This helps us understand what's 'normal' for your metric.">
                   <IconButton size="small">
                     <InfoIcon fontSize="small" />
                   </IconButton>
@@ -412,7 +419,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
               </Typography>
               <Typography variant="body2">
                 Standard Deviation: {csvData?.statistics?.[selectedMetric]?.standardDeviation?.toFixed(4)}
-                <Tooltip title="A measure of variability in your metric">
+                <Tooltip title="Shows how much your data varies from the average. Higher numbers mean more variation in your metric values.">
                   <IconButton size="small">
                     <InfoIcon fontSize="small" />
                   </IconButton>
@@ -429,7 +436,14 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
           {/* Alpha and Beta in the first row */}
           <Grid item xs={12} sm={6}>
             <FormControl fullWidth>
-              <InputLabel>Alpha (Significance Level)</InputLabel>
+              <InputLabel>
+                Alpha (Significance Level)
+                <Tooltip title="Alpha is your tolerance for false positives - the chance you'll think there's a difference when there really isn't. 5% means you're willing to be wrong 1 out of 20 times.">
+                  <IconButton size="small">
+                    <InfoIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </InputLabel>
               <Select
                 value={alpha}
                 onChange={(e) => setAlpha(e.target.value as AlphaValue)}
@@ -445,7 +459,14 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
           </Grid>
           <Grid item xs={12} sm={6}>
             <FormControl fullWidth>
-              <InputLabel>Statistical Power (1-β)</InputLabel>
+              <InputLabel>
+                Statistical Power (1-β)
+                <Tooltip title="Power is your ability to detect a real difference when it exists. 80% power means if there really is a difference, you'll catch it 8 out of 10 times.">
+                  <IconButton size="small">
+                    <InfoIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </InputLabel>
               <Select
                 value={beta}
                 onChange={(e) => setBeta(e.target.value as BetaValue)}
@@ -463,7 +484,14 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
           {/* MDE Selection and Number of Paths side by side */}
           <Grid item xs={12} sm={6}>
             <FormControl fullWidth>
-              <InputLabel>Minimum Detectable Effect (MDE)</InputLabel>
+              <InputLabel>
+                Minimum Detectable Effect (MDE)
+                <Tooltip title="The smallest change you want to be able to detect. For example, if you want to catch a 5% improvement in conversion rate, set MDE to 5%. Smaller effects need more data to detect.">
+                  <IconButton size="small">
+                    <InfoIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </InputLabel>
               <Select
                 value={mde}
                 onChange={(e) => handleMdeChange(e.target.value)}
@@ -492,7 +520,14 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
 
           <Grid item xs={12} sm={6}>
             <FormControl fullWidth>
-              <InputLabel>Number of Paths</InputLabel>
+              <InputLabel>
+                Number of Paths
+                <Tooltip title="How many versions you're testing. A/B = 2 paths (control vs variant), A/B/C = 3 paths, etc. More paths means you need more traffic to get reliable results.">
+                  <IconButton size="small">
+                    <InfoIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </InputLabel>
               <Select
                 value={numPaths}
                 onChange={(e) => handleNumPathsChange(e.target.value)}
@@ -521,7 +556,14 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
           {/* Radio button groups in the same row */}
           <Grid item xs={12} sm={6}>
             <FormControl>
-              <FormLabel>MDE Type</FormLabel>
+              <FormLabel>
+                MDE Type
+                <Tooltip title="Percentage: your effect as a % change (like '5% improvement'). Absolute: your effect in the same units as your metric (like '+10 conversions').">
+                  <IconButton size="small">
+                    <InfoIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </FormLabel>
               <RadioGroup
                 row
                 value={mdeType}
@@ -542,7 +584,14 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
           </Grid>
           <Grid item xs={12} sm={6}>
             <FormControl>
-              <FormLabel>Test Type</FormLabel>
+              <FormLabel>
+                Test Type
+                <Tooltip title="Two-tailed: you want to detect changes in either direction (increase OR decrease). One-tailed: you only care about changes in one direction (like only increases).">
+                  <IconButton size="small">
+                    <InfoIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </FormLabel>
               <RadioGroup
                 row
                 value={testType}
@@ -568,7 +617,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
       <Paper sx={{ p: 3, mb: 3 }}>
         <Typography variant="subtitle2" gutterBottom>
           Allocation Ratios
-          <Tooltip title="Specify the percentage of total traffic allocated to each variant. Must sum to 100%.">
+          <Tooltip title="How you split your traffic between different versions. For example, 50-50 means half your users see each version. Must add up to 100%.">
             <IconButton size="small">
               <InfoIcon fontSize="small" />
             </IconButton>
@@ -795,7 +844,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                       <TableCell>Group Comparison</TableCell>
                       <TableCell align="right">
                         VAF
-                        <Tooltip title="Variance Adjustment Factor (VAF) = 1/r₁ + 1/r₂, where r₁ and r₂ are the allocation ratios">
+                        <Tooltip title="Variance Adjustment Factor - a number that adjusts sample size based on how you split traffic. Unequal splits (like 70-30) need more users than equal splits (50-50) to get reliable results.">
                           <IconButton size="small">
                             <InfoIcon fontSize="small" />
                           </IconButton>
@@ -803,7 +852,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                       </TableCell>
                       <TableCell align="right">
                         Required Total Sample Size
-                        <Tooltip title="Total sample size = VAF × Base sample size">
+                        <Tooltip title="The minimum total number of users you need for this comparison to detect your desired effect size reliably.">
                           <IconButton size="small">
                             <InfoIcon fontSize="small" />
                           </IconButton>
@@ -849,7 +898,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
               <Grid item xs={12}>
                 <Typography variant="body1" sx={{ mb: 1 }}>
                   Absolute MDE: {results.absoluteMde.toFixed(4)}
-                  <Tooltip title="The MDE must have the same unit as your metric's standard deviation for the sample size calculation">
+                  <Tooltip title="This is your minimum detectable effect in the same units as your metric. For example, if your metric is 'revenue per user', this shows the minimum dollar amount difference you can detect.">
                     <IconButton size="small">
                       <InfoIcon fontSize="small" />
                     </IconButton>
@@ -867,7 +916,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ csvData }) => {
                 <Divider sx={{ mb: 3 }} />
                 <Typography variant="subtitle1" gutterBottom sx={{ mb: 2 }}>
                   Power Analysis Calculation Details
-                  <Tooltip title="The formula and components used in this calculation">
+                  <Tooltip title="Here's how we calculated your sample size. Don't worry about the math - the key takeaway is how your settings (like MDE and power) affect the final number.">
                     <IconButton size="small">
                       <InfoIcon fontSize="small" />
                     </IconButton>
