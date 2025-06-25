@@ -132,7 +132,7 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
         return;
       }
 
-      // Build campaign data, only include description if not empty
+      // Build collaborators map and collaboratorIds array
       const collaborators = {
         [user.uid]: {
           user: {
@@ -160,6 +160,13 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
       }
 
       console.log('[CampaignManager] Creating campaign with data:', campaignData);
+      if (!campaignData || Object.keys(campaignData).length === 0) {
+        console.error('[CampaignManager] ERROR: campaignData is empty, aborting creation.');
+        setError('Internal error: campaign data is empty. Please try again.');
+        setCreating(false);
+        return;
+      }
+      console.log('[CampaignManager] About to call firestoreCreateCampaign with:', campaignData, user.uid);
       await firestoreCreateCampaign(campaignData, user.uid);
 
       setNewCampaignName('');

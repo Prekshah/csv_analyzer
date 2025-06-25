@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, setPersistence, browserLocalPersistence } from 'firebase/auth';
 
 // Firebase configuration
 const firebaseConfig = {
@@ -20,6 +20,11 @@ export const db = getFirestore(app);
 
 // Initialize Auth
 export const auth = getAuth(app);
+
+// Set auth persistence to local so user stays logged in after refresh
+setPersistence(auth, browserLocalPersistence).catch((err) => {
+  console.error('[Firebase] Failed to set auth persistence:', err);
+});
 
 // Configure Google Auth Provider with domain restriction
 export const googleProvider = new GoogleAuthProvider();
