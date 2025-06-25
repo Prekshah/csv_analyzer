@@ -42,6 +42,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
     };
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      console.log('[AuthContext] onAuthStateChanged fired. User:', firebaseUser?.uid, firebaseUser?.email);
       if (firebaseUser) {
         // Enforce @games24x7.com domain restriction
         if (firebaseUser.email && firebaseUser.email.endsWith('@games24x7.com')) {
@@ -53,17 +54,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           });
           setError(null);
           saveUserToFirestore(firebaseUser); // Save user info to Firestore
+          console.log('[AuthContext] User set:', firebaseUser.uid);
         } else {
           setUser(null);
           setError('Please sign in with your @games24x7.com email.');
           // Optionally sign out automatically
           firebaseSignOut(auth);
+          console.log('[AuthContext] User email not allowed, signed out.');
         }
       } else {
         setUser(null);
         setError(null);
+        console.log('[AuthContext] No user, set to null.');
       }
       setLoading(false);
+      console.log('[AuthContext] Loading set to false.');
     });
     return () => unsubscribe();
   }, []);

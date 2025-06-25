@@ -88,6 +88,7 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
 
   useEffect(() => {
     if (!user) return;
+    console.log('[CampaignManager] Fetching campaigns for user:', user.uid);
     setLoading(true);
     const unsubscribe = subscribeToUserCampaigns(user.uid, (userCampaigns) => {
       // Sort campaigns by most recently accessed (updatedAt or createdAt)
@@ -96,6 +97,7 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
         const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
         return bTime - aTime;
       });
+      console.log('[CampaignManager] Received', sortedCampaigns.length, 'campaigns');
       setCampaigns(sortedCampaigns);
       setLoading(false);
       if (deletingCampaignId && !sortedCampaigns.some(c => c.id === deletingCampaignId)) {
@@ -353,33 +355,10 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
   const getValidRole = (role: any): CollaboratorRole => validRoles.includes(role as CollaboratorRole) ? (role as CollaboratorRole) : 'viewer';
 
   if (loading) {
-    // Show skeletons for campaign cards while loading
-    return (
-      <Box>
-        <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-          <Typography variant="h5" fontWeight="bold">
-            My Campaigns
-          </Typography>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            disabled
-          >
-            New Campaign
-          </Button>
-        </Box>
-        <Grid container spacing={3}>
-          {[1, 2, 3].map((i) => (
-            <Grid item xs={12} md={6} lg={4} key={i}>
-              <Skeleton variant="rectangular" height={180} sx={{ borderRadius: 2, mb: 2 }} />
-              <Skeleton variant="text" width="60%" />
-              <Skeleton variant="text" width="40%" />
-              <Skeleton variant="text" width="80%" />
-            </Grid>
-          ))}
-        </Grid>
-      </Box>
-    );
+    <Box display="flex" flexDirection="column" alignItems="center" justifyContent="center" minHeight={200}>
+      <CircularProgress sx={{ mb: 2 }} />
+      <Typography variant="body1">Loading your campaigns...</Typography>
+    </Box>
   }
 
   return (
