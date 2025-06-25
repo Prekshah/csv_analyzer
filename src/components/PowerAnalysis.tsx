@@ -19,7 +19,6 @@ import {
   Radio,
   FormLabel,
   Divider,
-  ButtonGroup,
   TableContainer,
   Table,
   TableHead,
@@ -31,11 +30,11 @@ import InfoIcon from '@mui/icons-material/Info';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
-import ArrowDownward from '@mui/icons-material/ArrowDownward';
-import ArrowUpward from '@mui/icons-material/ArrowUpward';
 import CheckCircle from '@mui/icons-material/CheckCircle';
+import CollaborativeTextField from './CollaborativeTextField';
 
 interface PowerAnalysisProps {
+  campaignId?: string;
   csvData: any;
   onSampleSizeCalculated: (sampleSize: string, variance?: string) => void;
   onValuesChanged: (values: {
@@ -88,10 +87,6 @@ interface CalculationResults {
   vafResults: VAFResults;
 }
 
-interface SortOrder {
-  direction: 'asc' | 'desc' | null;
-}
-
 const VAF_EQUAL = 4; // constant for 50-50 split (1/0.5 + 1/0.5)
 
 const calculateVAF = (ratio1: number, ratio2: number): number => {
@@ -118,6 +113,7 @@ const calculateGroupSampleSizes = (totalSize: number, ratios: AllocationRatio[])
 };
 
 const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ 
+  campaignId, 
   csvData, 
   onSampleSizeCalculated,
   onValuesChanged 
@@ -141,9 +137,11 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
 
   // Get initial state from session storage or use defaults
   const getInitialState = () => {
-    const sessionState = sessionStorage.getItem('powerAnalysisState');
-    if (sessionState) {
-      return JSON.parse(sessionState);
+    if (campaignId) {
+      const sessionState = sessionStorage.getItem(`powerAnalysisState_${campaignId}`);
+      if (sessionState) {
+        return JSON.parse(sessionState);
+      }
     }
     return defaultValues;
   };
@@ -186,23 +184,23 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
     { value: 'custom', label: 'Custom value' }
   ];
 
-  const [sortOrder, setSortOrder] = useState<SortOrder>({ direction: null });
-
   // Save state to sessionStorage whenever values change
   useEffect(() => {
-    const stateToSave = {
-      selectedMetric,
-      alpha,
-      beta,
-      mde,
-      customMde,
-      mdeType,
-      testType,
-      numPaths,
-      customPaths,
-      allocationRatios
-    };
-    sessionStorage.setItem('powerAnalysisState', JSON.stringify(stateToSave));
+    if (campaignId) {
+      const stateToSave = {
+        selectedMetric,
+        alpha,
+        beta,
+        mde,
+        customMde,
+        mdeType,
+        testType,
+        numPaths,
+        customPaths,
+        allocationRatios
+      };
+      sessionStorage.setItem(`powerAnalysisState_${campaignId}`, JSON.stringify(stateToSave));
+    }
 
     // Notify parent component of value changes for HypothesisTestingProposal sync
     onValuesChanged({
@@ -214,19 +212,43 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
       variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
     });
   }, [selectedMetric, alpha, beta, mde, customMde, mdeType, testType, numPaths, customPaths, 
-      allocationRatios, onValuesChanged, csvData?.statistics]);
+      allocationRatios, onValuesChanged, csvData?.statistics, campaignId]);
 
   // Clear session storage on page unload
   useEffect(() => {
     const handleUnload = () => {
-      sessionStorage.removeItem('powerAnalysisState');
+      if (campaignId) {
+        sessionStorage.removeItem(`powerAnalysisState_${campaignId}`);
+      }
     };
 
     window.addEventListener('beforeunload', handleUnload);
     return () => {
       window.removeEventListener('beforeunload', handleUnload);
     };
-  }, []);
+  }, [campaignId]);
+
+  // Reset state when campaignId changes
+  useEffect(() => {
+    setSelectedMetric(getInitialState().selectedMetric);
+    setAlpha(getInitialState().alpha);
+    setBeta(getInitialState().beta);
+    setMde(getInitialState().mde);
+    setCustomMde(getInitialState().customMde);
+    setMdeType(getInitialState().mdeType);
+    setTestType(getInitialState().testType);
+    setNumPaths(getInitialState().numPaths);
+    setCustomPaths(getInitialState().customPaths);
+    setAllocationRatios(getInitialState().allocationRatios);
+    setResults(null);
+    setError('');
+    // TODO: Unsubscribe from previous Firestore listeners and subscribe to new campaign if needed
+    // Return cleanup function to unsubscribe
+    return () => {
+      // Unsubscribe logic here
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaignId]);
 
   const handleMetricSelect = (value: string) => {
     setSelectedMetric(value);
@@ -559,7 +581,9 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
     setAllocationRatios(defaultValues.allocationRatios);
     
     // Clear session storage
-    sessionStorage.removeItem('powerAnalysisState');
+    if (campaignId) {
+      sessionStorage.removeItem(`powerAnalysisState_${campaignId}`);
+    }
     
     // Clear the calculated values
     onSampleSizeCalculated('', '');
@@ -747,11 +771,12 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
               </Select>
             </FormControl>
             {mde === 'custom' && (
-              <TextField
+              <CollaborativeTextField
                 fullWidth
+                fieldName={`customMde_${campaignId}`}
                 label="Custom MDE Value"
                 value={customMde}
-                onChange={(e) => handleCustomMdeChange(e.target.value)}
+                onChange={handleCustomMdeChange}
                 type="number"
                 inputProps={{ step: 'any' }}
                 sx={{ mt: 2 }}
@@ -782,11 +807,12 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
               </Select>
             </FormControl>
             {numPaths === 'custom' && (
-              <TextField
+              <CollaborativeTextField
                 fullWidth
+                fieldName={`customPaths_${campaignId}`}
                 label="Custom Number of Paths"
                 value={customPaths}
-                onChange={(e) => handleCustomPathsChange(e.target.value)}
+                onChange={handleCustomPathsChange}
                 type="number"
                 inputProps={{ min: 2 }}
                 sx={{ mt: 2 }}
@@ -903,23 +929,12 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
             {allocationRatios.map((ratio, index) => (
               <Grid item xs={12} sm={6} md={4} key={ratio.name}>
                 <Box sx={{ mt: 2, mb: 1 }}>
-                  <TextField
+                  <CollaborativeTextField
                     fullWidth
+                    fieldName={`allocationRatio_${ratio.name}_${campaignId}`}
                     label={ratio.name}
                     value={ratio.ratio}
-                    onChange={(e) => {
-                      let value = e.target.value;
-                      if (value === '' || /^\d*\.?\d*$/.test(value)) {
-                        if (value.includes('.') && value.split('.')[1].length > 2) {
-                          return;
-                        }
-                        handleAllocationRatioChange(index, value);
-                      }
-                    }}
-                    onBlur={(e) => {
-                      const value = parseFloat(e.target.value || '0');
-                      handleAllocationRatioChange(index, value.toFixed(2));
-                    }}
+                    onChange={(value) => handleAllocationRatioChange(index, value)}
                     type="text"
                     inputProps={{ 
                       inputMode: 'decimal',

@@ -1,0 +1,80 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions for security
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isCompanyUser() {
+      return isAuthenticated() && 
+             request.auth.token.email.matches('.*@games24x7.com');
+    }
+    
+    function isAuthorizedForCampaign(campaignId) {
+      return isCompanyUser() && 
+             request.auth.uid in get(/databases/$(database)/documents/campaigns/$(campaignId)).data.collaborators.keys();
+    }
+    
+    function canEditCampaign(campaignId) {
+      let campaign = get(/databases/$(database)/documents/campaigns/$(campaignId)).data;
+      let userId = request.auth.uid;
+      return isCompanyUser() && 
+             userId in campaign.collaborators.keys() &&
+             campaign.collaborators[userId].role in ['owner', 'editor'];
+    }
+    
+    function isOwner(campaignId) {
+      let campaign = get(/databases/$(database)/documents/campaigns/$(campaignId)).data;
+      let userId = request.auth.uid;
+      return isCompanyUser() && 
+             userId in campaign.collaborators.keys() &&
+             campaign.collaborators[userId].role == 'owner';
+    }
+
+    // Campaign access control
+    match /campaigns/{campaignId} {
+      // Allow reading if user is a collaborator
+      allow read: if isAuthorizedForCampaign(campaignId);
+      
+      // Allow editing if user is owner or editor
+      allow update: if canEditCampaign(campaignId);
+      
+      // Allow creation only for company users (creator becomes owner)
+      allow create: if isCompanyUser() && 
+                    request.auth.uid in resource.data.collaborators.keys() &&
+                    resource.data.collaborators[request.auth.uid].role == 'owner';
+      
+      // Only owners can delete campaigns
+      allow delete: if isOwner(campaignId);
+    }
+
+    // User profiles (read-only for authenticated company users)
+    match /users/{userId} {
+      allow read: if isCompanyUser();
+      allow write: if isCompanyUser() && request.auth.uid == userId;
+    }
+
+    // Real-time presence system
+    match /presence/{campaignId}/users/{userId} {
+      // Allow read/write if user has access to the campaign and it's their own presence
+      allow read, write: if isAuthorizedForCampaign(campaignId) && 
+                         request.auth.uid == userId;
+      
+      // Allow reading other users' presence if user has access to campaign
+      allow read: if isAuthorizedForCampaign(campaignId);
+    }
+
+    // Campaign activity logs (read-only for collaborators)
+    match /activity/{campaignId}/logs/{logId} {
+      allow read: if isAuthorizedForCampaign(campaignId);
+      allow create: if isAuthorizedForCampaign(campaignId);
+    }
+
+    // Deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+} 

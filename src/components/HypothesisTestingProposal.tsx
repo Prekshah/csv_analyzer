@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box,
   TextField,
@@ -17,13 +17,39 @@ import {
   DialogActions,
   DialogContentText,
   Alert,
-  Tooltip,
-  IconButton,
+  Chip,
+  Divider,
+  Card,
+  CardContent,
 } from '@mui/material';
-import InfoIcon from '@mui/icons-material/Info';
+import CheckIcon from '@mui/icons-material/Check';
+import SyncIcon from '@mui/icons-material/Sync';
+import ErrorIcon from '@mui/icons-material/Error';
+import AddIcon from '@mui/icons-material/Add';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import PeopleIcon from '@mui/icons-material/People';
+import Tooltip from '@mui/material/Tooltip';
+import Badge from '@mui/material/Badge';
 import { styled } from '@mui/material/styles';
 import { Document, Packer, Paragraph, HeadingLevel, TextRun } from 'docx';
 import { saveAs } from 'file-saver';
+import { Campaign, ConflictData, SaveStatus, ProposalData, CollaborationState, UserPresence } from '../types/Campaign';
+import { 
+  createCampaign, 
+  saveCampaignData, 
+  loadCampaignData, 
+  getAllCampaigns, 
+  getDefaultProposalData,
+  debounce,
+} from '../utils/storage';
+import { formatRelativeTime } from '../utils/userUtils';
+import { collaborationManager } from '../utils/collaboration';
+import CollaborativeTextField from './CollaborativeTextField';
+import {
+  subscribeToProposalData,
+} from '../utils/firestoreProposalService';
+import { useAuth } from '../contexts/AuthContext';
+import { subscribeToPowerAnalysisData } from '../utils/firestoreCampaignService';
 
 const StyledPaper = styled(Paper)(({ theme }) => ({
   padding: theme.spacing(3),
@@ -37,41 +63,10 @@ const SectionTitle = styled(Typography)(({ theme }) => ({
   marginTop: theme.spacing(2),
 }));
 
-interface ProposalData {
-  title: string;
-  architects: string;
-  date: string;
-  businessProblem: string;
-  whyThisMatters: string;
-  quantifyImpact: string;
-  potentialBenefit: string;
-  previousWork: string;
-  researchQuestion: string;
-  nullHypothesis: string;
-  alternativeHypothesis: string;
-  studyType: string;
-  targetPopulation: string;
-  samplingStrategy: string;
-  eda: string;
-  mde: string;
-  power: string;
-  significanceLevel: string;
-  standardDeviation: string;
-  sampleSize: string;
-  usersPerDay: string;
-  expectedDays: string;
-  primaryMetrics: string;
-  secondaryMetrics: string;
-  guardrailMetrics: string;
-  potentialRisks: string;
-  sanityChecks: string;
-  statisticalTests: string;
-  segments: string;
-  fwerCorrection: string;
-  comments: string;
-}
+// ProposalData interface is now imported from types/Campaign.ts
 
 interface HypothesisTestingProposalProps {
+  campaignId?: string;
   calculatedSampleSize: string;
   calculatedVariance: string;
   powerAnalysisValues: {
@@ -81,70 +76,223 @@ interface HypothesisTestingProposalProps {
     significanceLevel: string;
     selectedMetric: string;
     variance: string;
-  };
+  } | null;
 }
 
 const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({ 
+  campaignId,
   calculatedSampleSize,
   calculatedVariance,
   powerAnalysisValues
 }) => {
-  // Default values
-  const defaultValues = {
-    title: '',
-    architects: '',
-    date: new Date().toISOString().split('T')[0],
-    businessProblem: '',
-    whyThisMatters: '',
-    quantifyImpact: '',
-    potentialBenefit: '',
-    previousWork: '',
-    researchQuestion: '',
-    nullHypothesis: '',
-    alternativeHypothesis: '',
-    studyType: '',
-    targetPopulation: '',
-    samplingStrategy: '',
-    eda: '',
-    mde: '5',
-    power: '0.8',
-    significanceLevel: '0.05',
-    standardDeviation: '',
-    sampleSize: '',
-    usersPerDay: '',
-    expectedDays: '',
-    primaryMetrics: '',
-    secondaryMetrics: '',
-    guardrailMetrics: '',
-    potentialRisks: '',
-    sanityChecks: '',
-    statisticalTests: '',
-    segments: '',
-    fwerCorrection: 'Bonferroni Correction',
-    comments: '',
-  };
-
-  // Use sessionStorage to persist during tab switches but clear on page reload
-  const getInitialState = () => {
-    const sessionState = sessionStorage.getItem('hypothesisProposalData');
-    if (sessionState) {
-      const parsedState = JSON.parse(sessionState);
-      return {
-        ...defaultValues,
-        ...parsedState
-      };
-    }
-    return defaultValues;
-  };
-
-  const [proposalData, setProposalData] = useState<ProposalData>(getInitialState());
-
+  // Campaign state
+  const [currentCampaign, setCurrentCampaign] = useState<Campaign | null>(null);
+  const [availableCampaigns, setAvailableCampaigns] = useState<Campaign[]>([]);
+  const [proposalData, setProposalData] = useState<ProposalData>(getDefaultProposalData());
+  const [currentVersion, setCurrentVersion] = useState<number>(Date.now());
+  
+  // UI state
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved');
   const [openDialog, setOpenDialog] = useState(false);
   const [emptyFields, setEmptyFields] = useState<string[]>([]);
+  const [showCampaignDialog, setShowCampaignDialog] = useState(false);
+  const [newCampaignName, setNewCampaignName] = useState('');
+  const [newCampaignDescription, setNewCampaignDescription] = useState('');
+  const [conflictData, setConflictData] = useState<ConflictData | null>(null);
+  const [showConflictDialog, setShowConflictDialog] = useState(false);
+  
+  // Collaboration state
+  const [activeUsers, setActiveUsers] = useState<UserPresence[]>([]);
+  const [overrideNotifications, setOverrideNotifications] = useState<string[]>([]);
+
+  // Auth context
+  const { user } = useAuth();
+  const [fieldUpdateInfo, setFieldUpdateInfo] = useState<{ [field: string]: { by: string, ts: number } }>({});
+
+  // Campaign management functions
+  const loadCampaign = async (campaignId: string) => {
+    // Find the campaign from availableCampaigns
+    const campaign = availableCampaigns.find(c => c.id === campaignId) || null;
+    setCurrentCampaign(campaign);
+    setSaveStatus('saving');
+    // Subscribe to proposal data in Firestore
+    if (proposalUnsubscribeRef.current) proposalUnsubscribeRef.current();
+    proposalUnsubscribeRef.current = subscribeToProposalData(campaignId, (data) => {
+      if (data) {
+        setProposalData(data);
+        setSaveStatus('saved');
+      } else {
+        setProposalData(getDefaultProposalData());
+        setSaveStatus('saved');
+      }
+    });
+  };
+
+  // Keep a ref to unsubscribe from Firestore listener
+  const proposalUnsubscribeRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    return () => {
+      if (proposalUnsubscribeRef.current) proposalUnsubscribeRef.current();
+    };
+  }, []);
+
+  // Update debouncedSave to use Firestore
+  const debouncedSave = useCallback(
+    debounce(async (campaign: Campaign, data: ProposalData) => {
+      if (campaign) {
+        setSaveStatus('saving');
+        try {
+          await saveCampaignData(campaign, data);
+          setCurrentVersion(Date.now());
+          setSaveStatus('saved');
+        } catch (error) {
+          console.error('Error saving proposal data:', error);
+          setSaveStatus('error');
+        }
+      }
+    }, 2000),
+    []
+  );
+
+  const createNewCampaign = (name: string, description: string = '') => {
+    const campaign = createCampaign(name, description);
+    const defaultData = getDefaultProposalData();
+    
+    // Save the new campaign
+    saveCampaignData(campaign, defaultData);
+    
+    // Update state
+    setCurrentCampaign(campaign);
+    setProposalData(defaultData);
+    setCurrentVersion(Date.now());
+    setSaveStatus('saved');
+    
+    // Initialize collaboration for new campaign
+    collaborationManager.initializeCampaign(campaign.id);
+    
+    // Refresh campaigns list
+    const updatedCampaigns = getAllCampaigns();
+    setAvailableCampaigns(updatedCampaigns);
+  };
+
+  const handleCampaignSelect = (event: SelectChangeEvent) => {
+    const value = event.target.value;
+    if (value === 'new') {
+      setShowCampaignDialog(true);
+    } else if (value) {
+      loadCampaign(value);
+    }
+  };
+
+  const handleCreateCampaign = () => {
+    if (newCampaignName.trim()) {
+      createNewCampaign(newCampaignName.trim(), newCampaignDescription.trim());
+      setNewCampaignName('');
+      setNewCampaignDescription('');
+      setShowCampaignDialog(false);
+    }
+  };
+
+  // Load available campaigns on mount
+  useEffect(() => {
+    const campaigns = getAllCampaigns();
+    setAvailableCampaigns(campaigns);
+    
+    // Load the most recent campaign if available
+    if (campaigns.length > 0 && !currentCampaign) {
+      loadCampaign(campaigns[0].id);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Set up collaboration listener
+  useEffect(() => {
+    const handleCollaborationUpdate = (state: CollaborationState) => {
+      setActiveUsers(collaborationManager.getActiveUsers());
+
+      // Handle incoming field updates from other users
+      const currentUser = collaborationManager.getCurrentUser();
+      const recentFieldUpdate = state.recentActivity.find(
+        activity => 
+          activity.type === 'FIELD_UPDATE' && 
+          activity.userId !== currentUser.id && // Not from current user
+          activity.timestamp > Date.now() - 5000 // Within last 5 seconds
+      );
+      
+      if (recentFieldUpdate && recentFieldUpdate.data?.fieldName && recentFieldUpdate.data?.fieldValue !== undefined) {
+        const fieldName = recentFieldUpdate.data.fieldName as keyof ProposalData;
+        const fieldValue = recentFieldUpdate.data.fieldValue;
+        
+        // Update the proposal data directly
+        setProposalData(prev => {
+          if (prev[fieldName] !== fieldValue) {
+            return { ...prev, [fieldName]: fieldValue };
+          }
+          return prev;
+        });
+      }
+      
+      // Check for override notifications
+      const recentOverride = state.recentActivity.find(
+        activity => 
+          activity.type === 'OVERRIDE_ATTEMPT' && 
+          activity.data?.originalUser === currentUser.name &&
+          activity.timestamp > Date.now() - 10000 // Within last 10 seconds
+      );
+      
+      if (recentOverride && recentOverride.data?.fieldName) {
+        const fieldDisplayName = recentOverride.data.fieldName
+          .replace(/([A-Z])/g, ' $1')
+          .replace(/^./, str => str.toUpperCase())
+          .trim();
+        
+        const notification = `${recentOverride.userName} has taken over editing the "${fieldDisplayName}" field`;
+        
+        setOverrideNotifications(prev => {
+          if (!prev.includes(notification)) {
+            return [notification, ...prev.slice(0, 4)]; // Keep only 5 notifications
+          }
+          return prev;
+        });
+        
+        // Auto-remove notification after 8 seconds
+        setTimeout(() => {
+          setOverrideNotifications(prev => prev.filter(n => n !== notification));
+        }, 8000);
+    }
+    };
+
+    collaborationManager.addListener(handleCollaborationUpdate);
+    
+    return () => {
+      collaborationManager.removeListener(handleCollaborationUpdate);
+      collaborationManager.cleanup();
+  };
+  }, []);
+
+  // Manual refresh function
+  const handleRefresh = () => {
+    if (currentCampaign) {
+      const campaignData = loadCampaignData(currentCampaign.id);
+      if (campaignData) {
+        setProposalData(campaignData.proposalData);
+        setCurrentVersion(campaignData.version);
+        setSaveStatus('saved');
+      }
+      
+      // Force collaboration state refresh
+      collaborationManager.initializeCampaign(currentCampaign.id);
+    }
+  };
+
+  // Helper function to get user initials
+  const getUserInitials = (name: string): string => {
+    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+  };
 
   // Update values when PowerAnalysis values change
   useEffect(() => {
-    if (powerAnalysisValues) {
+    if (powerAnalysisValues && currentCampaign) {
       const effectiveMde = powerAnalysisValues.mde || '5';
       const effectivePower = powerAnalysisValues.power || '0.8';
       const effectiveSignificanceLevel = powerAnalysisValues.significanceLevel || '0.05';
@@ -160,28 +308,30 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
           sampleSize: calculatedSampleSize || prev.sampleSize
         };
 
-        // Save to sessionStorage
-        sessionStorage.setItem('hypothesisProposalData', JSON.stringify(newData));
+        // Auto-save the updated data
+        if (currentCampaign) {
+          debouncedSave(currentCampaign, newData);
+        }
         return newData;
       });
     }
-  }, [powerAnalysisValues, calculatedSampleSize, calculatedVariance]);
-
-  // Clear sessionStorage on unmount
-  useEffect(() => {
-    return () => {
-      sessionStorage.removeItem('hypothesisProposalData');
-    };
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [powerAnalysisValues, calculatedSampleSize, calculatedVariance, currentCampaign]);
 
   const handleChange = (field: keyof ProposalData) => (
     event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement> | SelectChangeEvent
   ) => {
     const newValue = event.target.value;
+    handleFieldUpdate(field, newValue);
+  };
+
+  // Update handleFieldUpdate to use Firestore
+  const handleFieldUpdate = (field: keyof ProposalData, newValue: string) => {
+    if (!field || typeof field !== 'string') {
+      return;
+    }
     setProposalData(prev => {
       const newData = { ...prev, [field]: newValue };
-      
-      // Calculate expected days when users per day changes
       if (field === 'usersPerDay' && newValue && prev.sampleSize) {
         const usersPerDay = parseFloat(newValue);
         const sampleSize = parseFloat(prev.sampleSize);
@@ -189,7 +339,9 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
           newData.expectedDays = Math.ceil(sampleSize / usersPerDay).toString();
         }
       }
-      
+      if (currentCampaign) {
+        debouncedSave(currentCampaign, newData);
+      }
       return newData;
     });
   };
@@ -217,6 +369,91 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
 
   const handleDialogClose = () => {
     setOpenDialog(false);
+  };
+
+  // Conflict resolution functions
+  const handleConflictResolution = (action: 'use-latest' | 'keep-mine' | 'show-diff') => {
+    if (!conflictData) return;
+    
+    switch (action) {
+      case 'use-latest':
+        setCurrentCampaign(conflictData.saved.campaign);
+        setProposalData(conflictData.saved.proposalData);
+        setCurrentVersion(conflictData.saved.version);
+        setSaveStatus('saved');
+        break;
+      case 'keep-mine':
+        // Save current version as the latest
+        if (currentCampaign) {
+          saveCampaignData(currentCampaign, proposalData);
+          setCurrentVersion(Date.now());
+        }
+        break;
+      case 'show-diff':
+        // For now, just show an alert with basic diff info
+        alert(`Differences detected:\nYour version: ${conflictData.current.campaign?.updatedAt}\nLatest version: ${conflictData.saved.campaign.updatedAt}`);
+        return; // Don't close dialog
+    }
+    
+    setShowConflictDialog(false);
+    setConflictData(null);
+  };
+
+  // Save status component
+  const SaveStatusIndicator = () => {
+    const getStatusIcon = () => {
+      switch (saveStatus) {
+        case 'saving':
+          return <SyncIcon className="animate-spin" />;
+        case 'saved':
+          return <CheckIcon />;
+        case 'error':
+          return <ErrorIcon />;
+        case 'conflict':
+          return <ErrorIcon />;
+        default:
+          return <CheckIcon />;
+      }
+    };
+
+    const getStatusColor = () => {
+      switch (saveStatus) {
+        case 'saving':
+          return 'default';
+        case 'saved':
+          return 'success';
+        case 'error':
+        case 'conflict':
+          return 'error';
+        default:
+          return 'default';
+      }
+    };
+
+    const getStatusLabel = () => {
+      switch (saveStatus) {
+        case 'saving':
+          return 'Saving...';
+        case 'saved':
+          return 'Saved';
+        case 'error':
+          return 'Save Error';
+        case 'conflict':
+          return 'Conflict';
+        default:
+          return 'Saved';
+      }
+    };
+
+    return (
+      <Chip
+        icon={getStatusIcon()}
+        label={getStatusLabel()}
+        color={getStatusColor() as any}
+        size="small"
+        sx={{ position: 'fixed', top: 20, right: 20, zIndex: 1000 }}
+      />
+    );
   };
 
   const performExport = () => {
@@ -349,37 +586,259 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
     });
   };
 
+  // Replace all session/local storage usage with campaign-specific keys
+  const getInitialProposalState = () => {
+    if (campaignId) {
+      const sessionState = sessionStorage.getItem(`proposalState_${campaignId}`);
+      if (sessionState) {
+        return JSON.parse(sessionState);
+      }
+    }
+    return getDefaultProposalData();
+  };
+
+  // Use useEffect to reset state and listeners when campaignId changes
+  useEffect(() => {
+    // Reset state when campaignId changes
+    setProposalData(getInitialProposalState());
+    setCurrentVersion(Date.now());
+    setSaveStatus('saved');
+    // TODO: Unsubscribe from previous Firestore listeners and subscribe to new campaign if needed
+    // Return cleanup function to unsubscribe
+    return () => {
+      // Unsubscribe logic here
+      if (proposalUnsubscribeRef.current) proposalUnsubscribeRef.current();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaignId]);
+
+  // Save state to sessionStorage whenever proposalData changes
+  useEffect(() => {
+    if (campaignId) {
+      sessionStorage.setItem(`proposalState_${campaignId}`, JSON.stringify(proposalData));
+    }
+  }, [proposalData, campaignId]);
+
+  // In the effect/listener for Power Analysis value changes:
+  useEffect(() => {
+    if (!currentCampaign) return;
+    // Subscribe to Power Analysis values for this campaign
+    const unsubscribe = subscribeToPowerAnalysisData(currentCampaign.id, (data: any, updatedBy: string) => {
+      // For each imported field, if value changed and updatedBy is not current user, update proposal and set notification
+      const importedFields = [
+        { key: 'sampleSize', label: 'Sample Size' },
+        { key: 'standardDeviation', label: 'Standard Deviation' },
+        { key: 'mde', label: 'MDE' },
+        { key: 'power', label: 'Power' },
+        { key: 'significanceLevel', label: 'Significance Level' }
+      ];
+      importedFields.forEach(({ key }) => {
+        if (proposalData[key as keyof ProposalData] !== data[key] && updatedBy !== user?.displayName) {
+          setProposalData(prev => ({ ...prev, [key as keyof ProposalData]: data[key] }));
+          setFieldUpdateInfo(prev => ({ ...prev, [key]: { by: updatedBy, ts: Date.now() } }));
+          setTimeout(() => {
+            setFieldUpdateInfo(prev => {
+              const copy = { ...prev };
+              delete copy[key];
+              return copy;
+            });
+          }, 6000);
+        }
+      });
+    });
+    return () => unsubscribe && unsubscribe();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentCampaign, proposalData, user]);
+
   return (
     <Box sx={{ maxWidth: '1200px', margin: 'auto', padding: 2 }}>
-      <Typography variant="h4" gutterBottom>
+      {/* Save Status Indicator */}
+      <SaveStatusIndicator />
+      
+      {/* Override Notifications */}
+      {overrideNotifications.map((notification, index) => (
+        <Alert 
+          key={index}
+          severity="warning" 
+          sx={{ mb: 1 }}
+          onClose={() => setOverrideNotifications(prev => prev.filter((_, i) => i !== index))}
+        >
+          {notification}
+        </Alert>
+      ))}
+      
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+        <Typography variant="h4" gutterBottom sx={{ mb: 0 }}>
         Hypothesis Testing Proposal
       </Typography>
+        
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {/* Active Users Badge */}
+          {activeUsers.length > 0 && (
+            <Tooltip title={`${activeUsers.length} user${activeUsers.length > 1 ? 's' : ''} active: ${activeUsers.map(u => u.userName).join(', ')}`}>
+              <Badge badgeContent={activeUsers.length} color="primary">
+                <PeopleIcon color="action" />
+              </Badge>
+            </Tooltip>
+          )}
+          
+          {/* Refresh Button */}
+          <Tooltip title="Refresh to get latest updates from other users">
+            <Button
+              variant="outlined"
+              onClick={handleRefresh}
+              color="primary"
+              startIcon={<RefreshIcon />}
+              sx={{
+                borderWidth: 2,
+                '&:hover': {
+                  borderWidth: 2,
+                  bgcolor: 'primary.50'
+                }
+              }}
+            >
+              Refresh
+            </Button>
+          </Tooltip>
+        </Box>
+      </Box>
+
+      {/* Campaign Management Section */}
+      <Card sx={{ mb: 3, bgcolor: 'background.paper' }}>
+        <CardContent>
+          <Grid container spacing={2} alignItems="center">
+            <Grid item xs={12} md={6}>
+              <FormControl fullWidth>
+                <InputLabel>Campaign</InputLabel>
+                <Select
+                  value={currentCampaign?.id || ''}
+                  onChange={handleCampaignSelect}
+                  label="Campaign"
+                >
+                  {availableCampaigns.map(campaign => (
+                    <MenuItem key={campaign.id} value={campaign.id}>
+                      <Box>
+                        <Typography variant="body1">{campaign.name}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {campaign.description}
+                        </Typography>
+                      </Box>
+                    </MenuItem>
+                  ))}
+                  <Divider />
+                  <MenuItem value="new">
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <AddIcon fontSize="small" />
+                      <Typography>Create New Campaign</Typography>
+                    </Box>
+                  </MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} md={6}>
+              {currentCampaign && (
+                <Box>
+                  <Typography variant="body2" color="text.secondary">
+                    <strong>Last modified:</strong> {currentCampaign.updatedAt ? formatRelativeTime(
+                      currentCampaign.updatedAt instanceof Date 
+                        ? currentCampaign.updatedAt.toISOString() 
+                        : currentCampaign.updatedAt
+                    ) : 'Unknown'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    <strong>By:</strong> {currentCampaign.createdBy && currentCampaign.collaborators[currentCampaign.createdBy]?.user.displayName || 'Unknown'}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    <strong>Created:</strong> {currentCampaign.createdAt ? formatRelativeTime(
+                      currentCampaign.createdAt instanceof Date 
+                        ? currentCampaign.createdAt.toISOString() 
+                        : currentCampaign.createdAt
+                    ) : 'Unknown'}
+                  </Typography>
+                  
+                  {/* Active Users Indicator */}
+                  {activeUsers.length > 0 && (
+                    <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        <strong>Active users:</strong>
+                      </Typography>
+                      <Box sx={{ display: 'flex', gap: 0.5 }}>
+                        {activeUsers.slice(0, 3).map((user) => (
+                          <Chip
+                            key={user.userId}
+                            size="small"
+                            avatar={
+                              <Box
+                                sx={{
+                                  width: 16,
+                                  height: 16,
+                                  borderRadius: '50%',
+                                  bgcolor: user.color,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  fontSize: '0.6rem',
+                                  fontWeight: 'bold',
+                                  color: 'white',
+                                }}
+                              >
+                                {user.userName.charAt(0).toUpperCase()}
+                              </Box>
+                            }
+                            label={user.userName.split(' ')[0]}
+                            sx={{
+                              height: 20,
+                              fontSize: '0.7rem',
+                              bgcolor: `${user.color}20`,
+                              border: `1px solid ${user.color}`,
+                            }}
+                          />
+                        ))}
+                        {activeUsers.length > 3 && (
+                          <Chip
+                            size="small"
+                            label={`+${activeUsers.length - 3}`}
+                            sx={{ height: 20, fontSize: '0.7rem' }}
+                          />
+                        )}
+                      </Box>
+                    </Box>
+                  )}
+                </Box>
+              )}
+            </Grid>
+          </Grid>
+        </CardContent>
+      </Card>
 
       <StyledPaper>
         <Grid container spacing={3}>
           <Grid item xs={12}>
-            <TextField
+            <CollaborativeTextField
+              fieldName="title"
               fullWidth
               label="Experiment/Analysis Title"
               value={proposalData.title}
-              onChange={handleChange('title')}
+              onChange={(value) => handleFieldUpdate('title', value)}
             />
           </Grid>
           <Grid item xs={12} md={6}>
-            <TextField
+            <CollaborativeTextField
+              fieldName="architects"
               fullWidth
               label="Experiment Architects"
               value={proposalData.architects}
-              onChange={handleChange('architects')}
+              onChange={(value) => handleFieldUpdate('architects', value)}
             />
           </Grid>
           <Grid item xs={12} md={6}>
-            <TextField
+            <CollaborativeTextField
+              fieldName="date"
               fullWidth
               type="date"
               label="Date"
               value={proposalData.date}
-              onChange={handleChange('date')}
+              onChange={(value) => handleFieldUpdate('date', value)}
               InputLabelProps={{ shrink: true }}
             />
           </Grid>
@@ -390,23 +849,25 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
         <SectionTitle variant="h6">1. Business Context</SectionTitle>
         <Grid container spacing={3}>
           <Grid item xs={12}>
-            <TextField
+            <CollaborativeTextField
+              fieldName="businessProblem"
               fullWidth
               multiline
               rows={3}
               label="Business Problem"
               value={proposalData.businessProblem}
-              onChange={handleChange('businessProblem')}
+              onChange={(value) => handleFieldUpdate('businessProblem', value)}
             />
           </Grid>
           <Grid item xs={12}>
-            <TextField
+            <CollaborativeTextField
+              fieldName="whyThisMatters"
               fullWidth
               multiline
               rows={3}
               label="Why This Matters"
               value={proposalData.whyThisMatters}
-              onChange={handleChange('whyThisMatters')}
+              onChange={(value) => handleFieldUpdate('whyThisMatters', value)}
             />
           </Grid>
           <Grid item xs={12}>
@@ -446,33 +907,36 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
         <SectionTitle variant="h6">2. Research Question and Hypotheses</SectionTitle>
         <Grid container spacing={3}>
           <Grid item xs={12}>
-            <TextField
+            <CollaborativeTextField
+              fieldName="researchQuestion"
               fullWidth
               multiline
               rows={2}
               label="Research Question"
               value={proposalData.researchQuestion}
-              onChange={handleChange('researchQuestion')}
+              onChange={(value) => handleFieldUpdate('researchQuestion', value)}
             />
           </Grid>
           <Grid item xs={12}>
-            <TextField
+            <CollaborativeTextField
+              fieldName="nullHypothesis"
               fullWidth
               multiline
               rows={2}
               label="Null Hypothesis (H0)"
               value={proposalData.nullHypothesis}
-              onChange={handleChange('nullHypothesis')}
+              onChange={(value) => handleFieldUpdate('nullHypothesis', value)}
             />
           </Grid>
           <Grid item xs={12}>
-            <TextField
+            <CollaborativeTextField
+              fieldName="alternativeHypothesis"
               fullWidth
               multiline
               rows={2}
               label="Alternative Hypothesis (H1)"
               value={proposalData.alternativeHypothesis}
-              onChange={handleChange('alternativeHypothesis')}
+              onChange={(value) => handleFieldUpdate('alternativeHypothesis', value)}
             />
           </Grid>
         </Grid>
@@ -532,68 +996,109 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
         <SectionTitle variant="h6">4. Sample Size and Power Analysis</SectionTitle>
         <Grid container spacing={3}>
           <Grid item xs={12} md={6}>
-            <TextField
-              fullWidth
-              label="Minimum Detectable Effect (MDE)"
-              value={proposalData.mde + '%'}
-              onChange={handleChange('mde')}
-              helperText={powerAnalysisValues?.mde 
-                ? `Value from Power Analysis: ${powerAnalysisValues.mde}${powerAnalysisValues.mdeType === 'percentage' ? '%' : ''}`
-                : "Default: 5%"}
-            />
+            <Box sx={{ position: 'relative' }}>
+              <TextField
+                fullWidth
+                label="Minimum Detectable Effect (MDE)"
+                value={proposalData.mde + '%'}
+                onChange={handleChange('mde')}
+                helperText={powerAnalysisValues?.mde 
+                  ? `Value from Power Analysis: ${powerAnalysisValues.mde}${powerAnalysisValues?.mdeType === 'percentage' ? '%' : ''}`
+                  : "Default: 5%"}
+                sx={fieldUpdateInfo.mde ? { backgroundColor: '#fffde7', transition: 'background 0.5s' } : {}}
+              />
+              {fieldUpdateInfo.mde && (
+                <Typography variant="caption" sx={{ color: '#bfa100', fontStyle: 'italic', position: 'absolute', left: 0, top: '100%' }}>
+                  Updated by {fieldUpdateInfo.mde.by}
+                </Typography>
+              )}
+            </Box>
           </Grid>
           <Grid item xs={12} md={6}>
-            <TextField
-              fullWidth
-              label="Statistical Power"
-              value={proposalData.power}
-              onChange={handleChange('power')}
-              helperText={powerAnalysisValues?.power 
-                ? `Value from Power Analysis: ${powerAnalysisValues.power}`
-                : "Default: 0.8 (80%)"}
-            />
+            <Box sx={{ position: 'relative' }}>
+              <TextField
+                fullWidth
+                label="Statistical Power"
+                value={proposalData.power}
+                onChange={handleChange('power')}
+                helperText={powerAnalysisValues?.power 
+                  ? `Value from Power Analysis: ${powerAnalysisValues.power}`
+                  : "Default: 0.8 (80%)"}
+                sx={fieldUpdateInfo.power ? { backgroundColor: '#fffde7', transition: 'background 0.5s' } : {}}
+              />
+              {fieldUpdateInfo.power && (
+                <Typography variant="caption" sx={{ color: '#bfa100', fontStyle: 'italic', position: 'absolute', left: 0, top: '100%' }}>
+                  Updated by {fieldUpdateInfo.power.by}
+                </Typography>
+              )}
+            </Box>
           </Grid>
           <Grid item xs={12} md={6}>
-            <TextField
-              fullWidth
-              label="Significance Level (α)"
-              value={proposalData.significanceLevel}
-              onChange={handleChange('significanceLevel')}
-              helperText={powerAnalysisValues?.significanceLevel 
-                ? `Value from Power Analysis: ${powerAnalysisValues.significanceLevel}`
-                : "Default: 0.05 (5%)"}
-            />
+            <Box sx={{ position: 'relative' }}>
+              <TextField
+                fullWidth
+                label="Significance Level (α)"
+                value={proposalData.significanceLevel}
+                onChange={handleChange('significanceLevel')}
+                helperText={powerAnalysisValues?.significanceLevel 
+                  ? `Value from Power Analysis: ${powerAnalysisValues.significanceLevel}`
+                  : "Default: 0.05 (5%)"}
+                sx={fieldUpdateInfo.significanceLevel ? { backgroundColor: '#fffde7', transition: 'background 0.5s' } : {}}
+              />
+              {fieldUpdateInfo.significanceLevel && (
+                <Typography variant="caption" sx={{ color: '#bfa100', fontStyle: 'italic', position: 'absolute', left: 0, top: '100%' }}>
+                  Updated by {fieldUpdateInfo.significanceLevel.by}
+                </Typography>
+              )}
+            </Box>
           </Grid>
           <Grid item xs={12} md={6}>
-            <TextField
-              fullWidth
-              label="Standard Deviation"
-              value={proposalData.standardDeviation}
-              onChange={handleChange('standardDeviation')}
-              helperText={calculatedVariance
-                ? `Value from Power Analysis: ${Math.sqrt(parseFloat(calculatedVariance)).toFixed(4)}`
-                : "Run Power Analysis to calculate"}
-              disabled // Make the field read-only
-            />
+            <Box sx={{ position: 'relative' }}>
+              <TextField
+                fullWidth
+                label="Standard Deviation"
+                value={proposalData.standardDeviation}
+                onChange={handleChange('standardDeviation')}
+                helperText={calculatedVariance
+                  ? `Value from Power Analysis: ${Math.sqrt(parseFloat(calculatedVariance)).toFixed(4)}`
+                  : "Run Power Analysis to calculate"}
+                disabled // Make the field read-only
+                sx={fieldUpdateInfo.standardDeviation ? { backgroundColor: '#fffde7', transition: 'background 0.5s' } : {}}
+              />
+              {fieldUpdateInfo.standardDeviation && (
+                <Typography variant="caption" sx={{ color: '#bfa100', fontStyle: 'italic', position: 'absolute', left: 0, top: '100%' }}>
+                  Updated by {fieldUpdateInfo.standardDeviation.by}
+                </Typography>
+              )}
+            </Box>
           </Grid>
           <Grid item xs={12} md={6}>
-            <TextField
-              fullWidth
-              label="Total Required Sample Size"
-              value={proposalData.sampleSize}
-              onChange={handleChange('sampleSize')}
-              helperText={calculatedSampleSize 
-                ? `Value from Power Analysis: ${calculatedSampleSize}`
-                : "Run Power Analysis to calculate"}
-              disabled // Make the field read-only
-            />
+            <Box sx={{ position: 'relative' }}>
+              <TextField
+                fullWidth
+                label="Total Required Sample Size"
+                value={proposalData.sampleSize}
+                onChange={handleChange('sampleSize')}
+                helperText={calculatedSampleSize 
+                  ? `Value from Power Analysis: ${calculatedSampleSize}`
+                  : "Run Power Analysis to calculate"}
+                disabled // Make the field read-only
+                sx={fieldUpdateInfo.sampleSize ? { backgroundColor: '#fffde7', transition: 'background 0.5s' } : {}}
+              />
+              {fieldUpdateInfo.sampleSize && (
+                <Typography variant="caption" sx={{ color: '#bfa100', fontStyle: 'italic', position: 'absolute', left: 0, top: '100%' }}>
+                  Updated by {fieldUpdateInfo.sampleSize.by}
+                </Typography>
+              )}
+            </Box>
           </Grid>
           <Grid item xs={12} md={6}>
-            <TextField
+            <CollaborativeTextField
+              fieldName="usersPerDay"
               fullWidth
               label="Users Per Day"
               value={proposalData.usersPerDay}
-              onChange={handleChange('usersPerDay')}
+              onChange={(value) => handleFieldUpdate('usersPerDay', value)}
               placeholder="e.g., 1200"
               type="number"
               helperText="Enter the average number of users per day"
@@ -724,7 +1229,7 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
         </Button>
       </Box>
 
-      {/* Confirmation Dialog */}
+      {/* Export Confirmation Dialog */}
       <Dialog
         open={openDialog}
         onClose={handleDialogClose}
@@ -753,6 +1258,101 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
           </Button>
           <Button onClick={performExport} color="primary" autoFocus>
             Export Anyway
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Create Campaign Dialog */}
+      <Dialog
+        open={showCampaignDialog}
+        onClose={() => setShowCampaignDialog(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Create New Campaign</DialogTitle>
+        <DialogContent>
+          <Box sx={{ mt: 1 }}>
+            <TextField
+              fullWidth
+              label="Campaign Name"
+              value={newCampaignName}
+              onChange={(e) => setNewCampaignName(e.target.value)}
+              placeholder="e.g., Q4 Checkout Optimization"
+              sx={{ mb: 2 }}
+            />
+            <TextField
+              fullWidth
+              label="Description (Optional)"
+              value={newCampaignDescription}
+              onChange={(e) => setNewCampaignDescription(e.target.value)}
+              placeholder="Brief description of the campaign goals"
+              multiline
+              rows={2}
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowCampaignDialog(false)}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleCreateCampaign} 
+            variant="contained"
+            disabled={!newCampaignName.trim()}
+          >
+            Create Campaign
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Conflict Resolution Dialog */}
+      <Dialog
+        open={showConflictDialog}
+        onClose={() => setShowConflictDialog(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>Campaign Conflict Detected</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            This campaign has been modified elsewhere. Choose how to proceed:
+          </Alert>
+          {conflictData && (
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="subtitle2" gutterBottom>
+                <strong>Your Version:</strong>
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Last modified: {conflictData.current.campaign?.updatedAt ? 
+                  formatRelativeTime(
+                    conflictData.current.campaign.updatedAt instanceof Date 
+                      ? conflictData.current.campaign.updatedAt.toISOString() 
+                      : conflictData.current.campaign.updatedAt
+                  ) : 'Unknown'}
+              </Typography>
+              
+              <Typography variant="subtitle2" gutterBottom>
+                <strong>Latest Version:</strong>
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Last modified: {formatRelativeTime(
+                  conflictData.saved.campaign.updatedAt instanceof Date 
+                    ? conflictData.saved.campaign.updatedAt.toISOString() 
+                    : conflictData.saved.campaign.updatedAt
+                )} by {conflictData.saved.campaign.collaborators[conflictData.saved.campaign.createdBy]?.user.displayName || 'Unknown'}
+              </Typography>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => handleConflictResolution('show-diff')}>
+            Show Differences
+          </Button>
+          <Button onClick={() => handleConflictResolution('keep-mine')} color="primary">
+            Keep My Version
+          </Button>
+          <Button onClick={() => handleConflictResolution('use-latest')} color="primary" variant="contained">
+            Use Latest Version
           </Button>
         </DialogActions>
       </Dialog>

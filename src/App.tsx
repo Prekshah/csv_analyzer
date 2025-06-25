@@ -23,7 +23,9 @@ import {
   Grid,
   IconButton,
   Tooltip,
-  Alert
+  Alert,
+  AppBar,
+  Toolbar
 } from '@mui/material';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend, Tooltip as RechartsTooltip,
@@ -34,9 +36,22 @@ import Papa from 'papaparse';
 import { styled } from '@mui/material/styles';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import FileUploadIcon from '@mui/icons-material/FileUpload';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import InfoIcon from '@mui/icons-material/Info';
 import PowerAnalysis from './components/PowerAnalysis';
 import HypothesisTestingProposal from './components/HypothesisTestingProposal';
+import BroadcastTest from './components/BroadcastTest';
+import LoginScreen from './components/LoginScreen';
+import LoadingScreen from './components/LoadingScreen';
+import ProfileDropdown from './components/ProfileDropdown';
+import CampaignManager from './components/CampaignManager';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { Campaign, CSVAnalysis } from './types/Campaign';
+import {
+  createCampaign as firestoreCreateCampaign,
+  updateCampaign as firestoreUpdateCampaign,
+  getCampaign as firestoreGetCampaign
+} from './utils/firestoreCampaignService';
 /* Temporarily commented out */
 // import GroupSplitting from './components/GroupSplitting';
 
@@ -197,25 +212,25 @@ function calculateStatistics(data: CSVValue[][], columnIndex: number): ColumnSta
     const n = numbers.length;
     
     if (n > 0) {
-      // Basic statistics
-      stats.mean = numbers.reduce((a, b) => a + b, 0) / n;
-      const sortedNumbers = numbers.sort((a, b) => a - b);
-      stats.median = sortedNumbers[Math.floor(n / 2)];
-      stats.min = Math.min(...numbers);
-      stats.max = Math.max(...numbers);
-      
+    // Basic statistics
+    stats.mean = numbers.reduce((a, b) => a + b, 0) / n;
+    const sortedNumbers = numbers.sort((a, b) => a - b);
+    stats.median = sortedNumbers[Math.floor(n / 2)];
+    stats.min = Math.min(...numbers);
+    stats.max = Math.max(...numbers);
+    
       // Standard deviation (avoid division by zero)
       if (n > 1) {
-        const variance = numbers.reduce((acc, val) => acc + Math.pow(val - stats.mean!, 2), 0) / n;
-        stats.standardDeviation = Math.sqrt(variance);
-        
+    const variance = numbers.reduce((acc, val) => acc + Math.pow(val - stats.mean!, 2), 0) / n;
+    stats.standardDeviation = Math.sqrt(variance);
+    
         // Skewness and Kurtosis (avoid division by zero)
         if (stats.standardDeviation > 0) {
-          const m3 = numbers.reduce((acc, val) => acc + Math.pow(val - stats.mean!, 3), 0) / n;
-          stats.skewness = m3 / Math.pow(stats.standardDeviation!, 3);
-          
-          const m4 = numbers.reduce((acc, val) => acc + Math.pow(val - stats.mean!, 4), 0) / n;
-          stats.kurtosis = (m4 / Math.pow(stats.standardDeviation!, 4)) - 3; // Excess kurtosis
+    const m3 = numbers.reduce((acc, val) => acc + Math.pow(val - stats.mean!, 3), 0) / n;
+    stats.skewness = m3 / Math.pow(stats.standardDeviation!, 3);
+    
+    const m4 = numbers.reduce((acc, val) => acc + Math.pow(val - stats.mean!, 4), 0) / n;
+    stats.kurtosis = (m4 / Math.pow(stats.standardDeviation!, 4)) - 3; // Excess kurtosis
         } else {
           stats.skewness = 0;
           stats.kurtosis = 0;
@@ -225,10 +240,10 @@ function calculateStatistics(data: CSVValue[][], columnIndex: number): ColumnSta
         stats.skewness = 0;
         stats.kurtosis = 0;
       }
-      
-      // Percentiles
-      stats.percentile25 = sortedNumbers[Math.floor(n * 0.25)];
-      stats.percentile75 = sortedNumbers[Math.floor(n * 0.75)];
+    
+    // Percentiles
+    stats.percentile25 = sortedNumbers[Math.floor(n * 0.25)];
+    stats.percentile75 = sortedNumbers[Math.floor(n * 0.75)];
     }
   }
   
@@ -970,7 +985,15 @@ function BoxPlot({ data, width, height }: { data: BoxPlotData; width: number; he
   );
 }
 
-function App() {
+// Authenticated App Component (main application logic)
+function AuthenticatedApp() {
+  const { user } = useAuth();
+  
+  // Campaign state
+  const [currentCampaign, setCurrentCampaign] = useState<Campaign | null>(null);
+  const [view, setView] = useState<'campaigns' | 'analysis'>('campaigns');
+  
+  // CSV Analysis state
   const [activeTab, setActiveTab] = useState(0);
   const [file, setFile] = useState<File | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -980,14 +1003,14 @@ function App() {
   const [metricError, setMetricError] = useState<string>('');
   const [calculatedSampleSize, setCalculatedSampleSize] = useState<string>('');
   const [calculatedVariance, setCalculatedVariance] = useState<string>('');
-  const [powerAnalysisValues, setPowerAnalysisValues] = useState({
-    mde: '',
-    mdeType: 'percentage' as 'absolute' | 'percentage',
-    power: '',
-    significanceLevel: '',
-    selectedMetric: '',
-    variance: ''
-  });
+  const [powerAnalysisValues, setPowerAnalysisValues] = useState<{
+    mde: string;
+    mdeType: 'absolute' | 'percentage';
+    power: string;
+    significanceLevel: string;
+    selectedMetric: string;
+    variance: string;
+  } | null>(null);
   
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
@@ -1006,6 +1029,107 @@ function App() {
     event.preventDefault();
   };
 
+  // Campaign management functions
+  const handleCampaignSelect = async (campaign: Campaign) => {
+    // Clear all campaign-specific state
+    setCsvData(null);
+    setFile(null);
+    setPowerAnalysisValues(null);
+    setCalculatedSampleSize('');
+    setCalculatedVariance('');
+    setSelectedDependentMetric('');
+    setManualMetricInput('');
+    setMetricError('');
+    setIsProcessing(false);
+    setActiveTab(0);
+    // Set new campaign
+    setCurrentCampaign(campaign);
+    setView('analysis');
+    // Load existing CSV data if available
+    if (campaign.csvAnalysis) {
+      setCsvData({
+        rowCount: campaign.csvAnalysis.rowCount,
+        columnCount: campaign.csvAnalysis.columnCount,
+        columns: campaign.csvAnalysis.columns,
+        data: campaign.csvAnalysis.data,
+        statistics: campaign.csvAnalysis.statistics,
+        dependencies: campaign.csvAnalysis.dependencies,
+        dependentMetrics: campaign.csvAnalysis.dependentMetrics
+      });
+    }
+  };
+
+  const handleNewCampaign = () => {
+    setCurrentCampaign(null);
+    setView('analysis');
+    // Clear existing data for new campaign
+    setCsvData(null);
+    setFile(null);
+  };
+
+  const handleBackToCampaigns = () => {
+    setView('campaigns');
+    setCurrentCampaign(null);
+  };
+
+  const saveCampaignData = async () => {
+    if (!csvData || !file || !user) return;
+
+    try {
+      const csvAnalysis: CSVAnalysis = {
+        rowCount: csvData.rowCount,
+        columnCount: csvData.columnCount,
+        columns: csvData.columns,
+        data: csvData.data,
+        statistics: csvData.statistics,
+        dependencies: csvData.dependencies,
+        dependentMetrics: csvData.dependentMetrics,
+        fileName: file.name,
+        fileSize: file.size,
+        uploadedAt: new Date()
+      };
+
+      if (currentCampaign) {
+        // Update existing campaign
+        await firestoreUpdateCampaign(currentCampaign.id, {
+          csvAnalysis,
+          updatedAt: new Date()
+        });
+        console.log('Campaign data saved successfully');
+      } else {
+        // Create new campaign
+        const campaignName = `Analysis of ${file.name.replace('.csv', '')}`;
+        const campaignId = await firestoreCreateCampaign({
+          name: campaignName,
+          description: `Automated analysis created from ${file.name}`,
+          createdBy: user.uid,
+          collaborators: {
+            [user.uid]: {
+              user: {
+                uid: user.uid,
+                email: user.email || 'unknown@games24x7.com',
+                displayName: user.displayName || 'Unknown User',
+                photoURL: user.photoURL || undefined
+              },
+              role: 'owner',
+              addedAt: new Date(),
+              addedBy: user.uid
+            }
+          },
+          isPublic: false,
+          csvAnalysis
+        }, user.uid);
+        
+        // Get the created campaign
+        const newCampaign = await firestoreGetCampaign(campaignId);
+        setCurrentCampaign(newCampaign);
+        console.log('New campaign created successfully');
+      }
+    } catch (error) {
+      console.error('Error saving campaign data:', error);
+    }
+  };
+
   const processFile = () => {
     if (!file) return;
     
@@ -1020,9 +1144,9 @@ function App() {
             return;
           }
 
-          const headers = results.data[0] as string[];
-          const rawData = results.data.slice(1) as string[][];
-          
+        const headers = results.data[0] as string[];
+        const rawData = results.data.slice(1) as string[][];
+        
           // Validate headers
           if (!headers || headers.length === 0) {
             console.error('No headers found in CSV file');
@@ -1033,11 +1157,11 @@ function App() {
           const data: CSVValue[][] = rawData
             .filter(row => row && row.length > 0) // Filter out empty rows
             .map(row =>
-              row.map(cell => ({
+          row.map(cell => ({
                 value: cell === '' || cell === null || cell === undefined ? null : 
                        (isNaN(Number(cell)) ? cell : Number(cell))
-              }))
-            );
+          }))
+        );
 
           // Ensure all rows have the same number of columns as headers
           const filteredData = data.filter(row => row.length === headers.length);
@@ -1048,7 +1172,7 @@ function App() {
             return;
           }
 
-          const statistics: Record<string, ColumnStatistics> = {};
+        const statistics: Record<string, ColumnStatistics> = {};
           headers.forEach((header, index) => {
             if (header && typeof header === 'string') {
               try {
@@ -1067,35 +1191,38 @@ function App() {
                 };
               }
             }
-          });
+        });
 
-          // First try to identify dependent metrics automatically
-          const autoDetectedMetrics = identifyDependentMetrics(headers);
-          
-          // Calculate both general and target-specific dependencies
+        // First try to identify dependent metrics automatically
+        const autoDetectedMetrics = identifyDependentMetrics(headers);
+        
+        // Calculate both general and target-specific dependencies
           const generalDependencies = findDependencies(filteredData, headers, statistics);
-          const targetDependencies = autoDetectedMetrics.length > 0
+        const targetDependencies = autoDetectedMetrics.length > 0
             ? findDependenciesWithTarget(filteredData, headers, statistics, autoDetectedMetrics[0])
-            : [];
+          : [];
 
-          // Combine both types of dependencies
-          const allDependencies = [...generalDependencies, ...targetDependencies];
+        // Combine both types of dependencies
+        const allDependencies = [...generalDependencies, ...targetDependencies];
 
-          setCsvData({
+        setCsvData({
             rowCount: filteredData.length,
-            columnCount: headers.length,
-            columns: headers,
+          columnCount: headers.length,
+          columns: headers,
             data: filteredData,
-            statistics: statistics,
-            dependencies: allDependencies,
-            dependentMetrics: autoDetectedMetrics
-          });
+          statistics: statistics,
+          dependencies: allDependencies,
+          dependentMetrics: autoDetectedMetrics
+        });
 
-          // Reset selection state when loading new file
-          setSelectedDependentMetric('');
-          setManualMetricInput('');
-          setMetricError('');
-          setIsProcessing(false);
+        // Reset selection state when loading new file
+        setSelectedDependentMetric('');
+        setManualMetricInput('');
+        setMetricError('');
+        setIsProcessing(false);
+          
+          // Auto-save to campaign (create new if none exists)
+          setTimeout(() => saveCampaignData(), 100);
         } catch (error) {
           console.error('Error processing CSV data:', error);
           setIsProcessing(false);
@@ -2014,7 +2141,7 @@ function App() {
 
         <Paper sx={{ p: 2, mb: 3 }}>
           <Typography variant="h6" gutterBottom>
-            Correlation Heatmap  
+            Correlation Heatmap
             <Tooltip title="This chart shows how your numeric columns relate to each other. Blue squares = strong relationship, white = no relationship. The diagonal line shows each column perfectly relates to itself.">
               <IconButton size="small">
                 <InfoIcon fontSize="small" />
@@ -2165,9 +2292,75 @@ function App() {
     </Paper>
   );
 
+  // Show campaigns view
+  if (view === 'campaigns') {
   return (
-    <Container maxWidth="xl">
-      <Typography variant="h4" gutterBottom>CSV File Analyzer</Typography>
+      <Box>
+        {/* App Bar with Profile Dropdown */}
+        <AppBar position="static" elevation={1} sx={{ bgcolor: 'background.paper', color: 'text.primary' }}>
+          <Toolbar>
+            <Typography variant="h6" component="div" sx={{ flexGrow: 1, color: 'primary.main', fontWeight: 'bold' }}>
+              CSV Analyzer
+            </Typography>
+            <ProfileDropdown />
+          </Toolbar>
+        </AppBar>
+
+        {/* Campaign Manager */}
+        <Container maxWidth="xl" sx={{ mt: 3 }}>
+          <CampaignManager 
+            onCampaignSelect={handleCampaignSelect}
+            onNewCampaign={handleNewCampaign}
+          />
+        </Container>
+      </Box>
+    );
+  }
+
+  // Show analysis view
+  return (
+    <Box>
+      {/* App Bar with Profile Dropdown */}
+      <AppBar position="static" elevation={1} sx={{ bgcolor: 'background.paper', color: 'text.primary' }}>
+        <Toolbar>
+          <Button
+            startIcon={<ArrowBackIcon />}
+            onClick={handleBackToCampaigns}
+            sx={{ mr: 2 }}
+          >
+            Back to Campaigns
+          </Button>
+          <Typography variant="h6" component="div" sx={{ flexGrow: 1, color: 'primary.main', fontWeight: 'bold' }}>
+            {currentCampaign ? currentCampaign.name : 'New Campaign'}
+          </Typography>
+          {csvData && (
+            <Button
+              variant="contained"
+              size="small"
+              onClick={saveCampaignData}
+              sx={{ mr: 2 }}
+            >
+              {currentCampaign ? 'Save' : 'Save as New Campaign'}
+            </Button>
+          )}
+          <ProfileDropdown />
+        </Toolbar>
+      </AppBar>
+
+      {/* Main Content */}
+      <Container maxWidth="xl" sx={{ mt: 3 }}>
+        {!currentCampaign && (
+          <Typography variant="h4" gutterBottom>Create New Campaign</Typography>
+        )}
+        
+        {currentCampaign && (
+          <Box sx={{ mb: 3 }}>
+            <Typography variant="h4" gutterBottom>{currentCampaign.name}</Typography>
+            <Typography color="text.secondary" gutterBottom>
+              {currentCampaign.description}
+            </Typography>
+          </Box>
+        )}
       
       <UploadArea
         onDrop={handleDrop}
@@ -2227,39 +2420,71 @@ function App() {
       </UploadArea>
 
       {csvData && (
-        <Box sx={{ width: '100%', typography: 'body1' }}>
+          <Box sx={{ width: '100%', typography: 'body1' }}>
           <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-            <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)} aria-label="analysis tabs">
+              <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)} aria-label="analysis tabs">
               <Tab label="Summary" />
               <Tab label="Statistics" />
               <Tab label="Distributions" />
               <Tab label="Correlations" />
               <Tab label="Power Analysis" />
-              <Tab label="Hypothesis Testing Proposal" />
+                <Tab label="Hypothesis Testing Proposal" />
+                <Tab label="Broadcast Test" />
             </Tabs>
           </Box>
 
-          {activeTab === 0 && renderSummaryTab()}
-          {activeTab === 1 && renderStatisticsTab()}
-          {activeTab === 2 && renderDistributionsTab()}
-          {activeTab === 3 && renderCorrelationsTab()}
-          {activeTab === 4 && <PowerAnalysis 
-            csvData={csvData} 
-            onSampleSizeCalculated={(size, variance) => {
-              setCalculatedSampleSize(size);
-              if (variance) setCalculatedVariance(variance);
-            }}
-            onValuesChanged={(values) => setPowerAnalysisValues(values)}
-          />}
-          {activeTab === 5 && <HypothesisTestingProposal 
-            calculatedSampleSize={calculatedSampleSize} 
-            calculatedVariance={calculatedVariance}
-            powerAnalysisValues={powerAnalysisValues}
-          />}
-        </Box>
+            {activeTab === 0 && renderSummaryTab()}
+            {activeTab === 1 && renderStatisticsTab()}
+            {activeTab === 2 && renderDistributionsTab()}
+            {activeTab === 3 && renderCorrelationsTab()}
+            {activeTab === 4 && <PowerAnalysis 
+              key={currentCampaign?.id || 'no-campaign'}
+              campaignId={currentCampaign?.id}
+              csvData={csvData} 
+              onSampleSizeCalculated={(size, variance) => {
+                setCalculatedSampleSize(size);
+                if (variance) setCalculatedVariance(variance);
+              }}
+              onValuesChanged={(values) => setPowerAnalysisValues(values)}
+            />}
+            {activeTab === 5 && <HypothesisTestingProposal 
+              key={currentCampaign?.id || 'no-campaign'}
+              campaignId={currentCampaign?.id}
+              calculatedSampleSize={calculatedSampleSize}
+              calculatedVariance={calculatedVariance}
+              powerAnalysisValues={powerAnalysisValues}
+            />}
+            {activeTab === 6 && <BroadcastTest />}
+          </Box>
       )}
     </Container>
+    </Box>
   );
+}
+
+// Main App Component with Authentication
+function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
+  );
+}
+
+// App Content with Authentication Logic
+function AppContent() {
+  const { user, loading, error, signIn } = useAuth();
+
+  if (loading) {
+    return <div style={{ textAlign: 'center', marginTop: 100 }}>Loading...</div>;
+  }
+
+  if (!user) {
+    return <LoginScreen onSignIn={signIn} error={error} />;
+  }
+
+  // Restore the main app UI
+  return <AuthenticatedApp />;
 }
 
 export default App;
