@@ -2475,6 +2475,8 @@ function App() {
 function AppContent() {
   const { user, loading, error, signIn } = useAuth();
 
+  console.log('[AppContent] Rendered. loading:', loading, 'user:', user);
+
   if (loading) {
     return <div style={{ textAlign: 'center', marginTop: 100 }}>Loading...</div>;
   }

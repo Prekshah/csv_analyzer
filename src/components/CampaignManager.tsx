@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box,
   Button,
@@ -60,7 +60,7 @@ type CollaboratorRole = 'editor' | 'viewer' | 'owner';
 const validRoles: CollaboratorRole[] = ['editor', 'viewer', 'owner'];
 
 const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onNewCampaign }) => {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -85,9 +85,15 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
   const [showDeleteSpinner, setShowDeleteSpinner] = useState(false);
   const [deletingCampaignId, setDeletingCampaignId] = useState<string | null>(null);
   let deleteSpinnerTimeout: NodeJS.Timeout | null = null;
+  const unsubscribeRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    if (!user) return;
+    console.log('[CampaignManager] useEffect run. authLoading:', authLoading, 'user:', user);
+    if (unsubscribeRef.current) {
+      unsubscribeRef.current();
+      unsubscribeRef.current = null;
+    }
+    if (authLoading || !user) return;
     console.log('[CampaignManager] Fetching campaigns for user:', user.uid);
     setLoading(true);
     const unsubscribe = subscribeToUserCampaigns(user.uid, (userCampaigns) => {
@@ -105,8 +111,14 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
         setDeletingCampaignId(null);
       }
     });
-    return unsubscribe;
-  }, [user, deletingCampaignId]);
+    unsubscribeRef.current = unsubscribe;
+    return () => {
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
+      }
+    };
+  }, [user, authLoading, deletingCampaignId]);
 
   const handleCreateCampaign = async () => {
     if (!user || !newCampaignName.trim()) return;
@@ -121,22 +133,25 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
       }
 
       // Build campaign data, only include description if not empty
+      const collaborators = {
+        [user.uid]: {
+          user: {
+            uid: user.uid,
+            email: user.email || 'unknown@games24x7.com',
+            displayName: user.displayName || 'Unknown User',
+            photoURL: user.photoURL || undefined
+          },
+          role: 'owner',
+          addedAt: new Date(),
+          addedBy: user.uid
+        }
+      };
+      const collaboratorIds = [user.uid];
       const campaignData: any = {
         name: newCampaignName.trim(),
         createdBy: user.uid,
-        collaborators: {
-          [user.uid]: {
-            user: {
-              uid: user.uid,
-              email: user.email || 'unknown@games24x7.com',
-              displayName: user.displayName || 'Unknown User',
-              photoURL: user.photoURL || undefined
-            },
-            role: 'owner',
-            addedAt: new Date(),
-            addedBy: user.uid
-          }
-        },
+        collaborators,
+        collaboratorIds,
         isPublic: false,
         tags: []
       };
@@ -144,6 +159,7 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
         campaignData.description = newCampaignDescription.trim();
       }
 
+      console.log('[CampaignManager] Creating campaign with data:', campaignData);
       await firestoreCreateCampaign(campaignData, user.uid);
 
       setNewCampaignName('');
