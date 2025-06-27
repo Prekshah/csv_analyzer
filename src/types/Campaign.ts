@@ -1,5 +1,7 @@
 // Campaign and collaboration types for Firestore integration
 
+import { FieldValue } from 'firebase/firestore';
+
 export interface User {
   uid: string;
   email: string;
@@ -10,7 +12,7 @@ export interface User {
 export interface Collaborator {
   user: User;
   role: 'owner' | 'editor' | 'viewer';
-  addedAt: Date;
+  addedAt: Date | FieldValue;
   addedBy: string; // uid of user who added them
 }
 

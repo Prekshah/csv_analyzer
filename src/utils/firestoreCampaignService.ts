@@ -18,11 +18,7 @@ import { Campaign } from '../types/Campaign';
 const CAMPAIGNS_COLLECTION = 'campaigns';
 
 export const createCampaign = async (campaign: Omit<Campaign, 'id' | 'createdAt' | 'updatedAt'>, userId: string): Promise<string> => {
-  console.log('[firestoreCampaignService] createCampaign campaign:', campaign, 'userId:', userId);
-  if (!campaign || Object.keys(campaign).length === 0) {
-    console.error('[firestoreCampaignService] ERROR: campaign is empty, aborting Firestore write.');
-    throw new Error('Internal error: campaign data is empty.');
-  }
+  console.log('[firestoreCampaignService] createCampaign payload:', { campaign, userId });
   const campaignsRef = collection(db, CAMPAIGNS_COLLECTION);
   const collaboratorIds = Object.keys(campaign.collaborators || { [userId]: {} });
   const docRef = await addDoc(campaignsRef, {

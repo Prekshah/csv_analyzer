@@ -50,6 +50,7 @@ import {
 } from '../utils/firestoreCampaignService';
 import { validateCampaignName } from '../utils/storage';
 import { getUidByEmail } from '../utils/userUtils';
+import { serverTimestamp, Timestamp } from 'firebase/firestore';
 
 interface CampaignManagerProps {
   onCampaignSelect: (campaign: Campaign) => void;
@@ -97,6 +98,7 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
     console.log('[CampaignManager] Fetching campaigns for user:', user.uid);
     setLoading(true);
     const unsubscribe = subscribeToUserCampaigns(user.uid, (userCampaigns) => {
+      console.log('[DEBUG] Firestore subscription received campaigns:', userCampaigns);
       // Sort campaigns by most recently accessed (updatedAt or createdAt)
       const sortedCampaigns = [...userCampaigns].sort((a, b) => {
         const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
@@ -142,7 +144,7 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
             photoURL: user.photoURL || undefined
           },
           role: 'owner',
-          addedAt: new Date(),
+          addedAt: serverTimestamp(),
           addedBy: user.uid
         }
       };
@@ -159,14 +161,7 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
         campaignData.description = newCampaignDescription.trim();
       }
 
-      console.log('[CampaignManager] Creating campaign with data:', campaignData);
-      if (!campaignData || Object.keys(campaignData).length === 0) {
-        console.error('[CampaignManager] ERROR: campaignData is empty, aborting creation.');
-        setError('Internal error: campaign data is empty. Please try again.');
-        setCreating(false);
-        return;
-      }
-      console.log('[CampaignManager] About to call firestoreCreateCampaign with:', campaignData, user.uid);
+      console.log('[DEBUG] Creating campaign with data:', campaignData, 'User ID:', user.uid);
       await firestoreCreateCampaign(campaignData, user.uid);
 
       setNewCampaignName('');
@@ -233,7 +228,19 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
     }
   };
 
-  const formatDate = (date: Date) => {
+  const formatDate = (date: any) => {
+    if (!date) return 'Unknown';
+    // Firestore Timestamp
+    if (date instanceof Timestamp) {
+      date = date.toDate();
+    } else if (date && typeof date.toDate === 'function') {
+      // Some Firestore Timestamp polyfills
+      date = date.toDate();
+    } else if (typeof date === 'string' || typeof date === 'number') {
+      const parsed = new Date(date);
+      if (!isNaN(parsed.getTime())) date = parsed;
+    }
+    if (!(date instanceof Date) || isNaN(date.getTime())) return 'Unknown';
     return new Intl.DateTimeFormat('en-US', {
       year: 'numeric',
       month: 'short',
@@ -329,7 +336,7 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
         photoURL: undefined
       },
       role: collaboratorRole,
-      addedAt: new Date(),
+      addedAt: serverTimestamp(),
       addedBy: user?.uid || ''
     };
     const newCollaboratorIds = Object.keys(newCollaborators);

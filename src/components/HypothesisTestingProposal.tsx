@@ -997,14 +997,14 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
         <Grid container spacing={3}>
           <Grid item xs={12} md={6}>
             <Box sx={{ position: 'relative' }}>
-            <TextField
-              fullWidth
-              label="Minimum Detectable Effect (MDE)"
-              value={proposalData.mde + '%'}
-              onChange={handleChange('mde')}
-              helperText={powerAnalysisValues?.mde 
+              <TextField
+                fullWidth
+                label="Minimum Detectable Effect (MDE)"
+                value={proposalData.mde + '%'}
+                onChange={handleChange('mde')}
+                helperText={powerAnalysisValues?.mde 
                   ? `Value from Power Analysis: ${powerAnalysisValues.mde}${powerAnalysisValues?.mdeType === 'percentage' ? '%' : ''}`
-                : "Default: 5%"}
+                  : "Default: 5%"}
                 sx={fieldUpdateInfo.mde ? { backgroundColor: '#fffde7', transition: 'background 0.5s' } : {}}
               />
               {fieldUpdateInfo.mde && (
@@ -1016,14 +1016,14 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
           </Grid>
           <Grid item xs={12} md={6}>
             <Box sx={{ position: 'relative' }}>
-            <TextField
-              fullWidth
-              label="Statistical Power"
-              value={proposalData.power}
-              onChange={handleChange('power')}
-              helperText={powerAnalysisValues?.power 
-                ? `Value from Power Analysis: ${powerAnalysisValues.power}`
-                : "Default: 0.8 (80%)"}
+              <TextField
+                fullWidth
+                label="Statistical Power"
+                value={proposalData.power}
+                onChange={handleChange('power')}
+                helperText={powerAnalysisValues?.power 
+                  ? `Value from Power Analysis: ${powerAnalysisValues.power}`
+                  : "Default: 0.8 (80%)"}
                 sx={fieldUpdateInfo.power ? { backgroundColor: '#fffde7', transition: 'background 0.5s' } : {}}
               />
               {fieldUpdateInfo.power && (
@@ -1035,14 +1035,14 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
           </Grid>
           <Grid item xs={12} md={6}>
             <Box sx={{ position: 'relative' }}>
-            <TextField
-              fullWidth
-              label="Significance Level (α)"
-              value={proposalData.significanceLevel}
-              onChange={handleChange('significanceLevel')}
-              helperText={powerAnalysisValues?.significanceLevel 
-                ? `Value from Power Analysis: ${powerAnalysisValues.significanceLevel}`
-                : "Default: 0.05 (5%)"}
+              <TextField
+                fullWidth
+                label="Significance Level (α)"
+                value={proposalData.significanceLevel}
+                onChange={handleChange('significanceLevel')}
+                helperText={powerAnalysisValues?.significanceLevel 
+                  ? `Value from Power Analysis: ${powerAnalysisValues.significanceLevel}`
+                  : "Default: 0.05 (5%)"}
                 sx={fieldUpdateInfo.significanceLevel ? { backgroundColor: '#fffde7', transition: 'background 0.5s' } : {}}
               />
               {fieldUpdateInfo.significanceLevel && (
@@ -1054,15 +1054,15 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
           </Grid>
           <Grid item xs={12} md={6}>
             <Box sx={{ position: 'relative' }}>
-            <TextField
-              fullWidth
-              label="Standard Deviation"
-              value={proposalData.standardDeviation}
-              onChange={handleChange('standardDeviation')}
-              helperText={calculatedVariance
-                ? `Value from Power Analysis: ${Math.sqrt(parseFloat(calculatedVariance)).toFixed(4)}`
-                : "Run Power Analysis to calculate"}
-              disabled // Make the field read-only
+              <TextField
+                fullWidth
+                label="Standard Deviation"
+                value={proposalData.standardDeviation}
+                onChange={handleChange('standardDeviation')}
+                helperText={calculatedVariance
+                  ? `Value from Power Analysis: ${Math.sqrt(parseFloat(calculatedVariance)).toFixed(4)}`
+                  : "Run Power Analysis to calculate"}
+                disabled // Make the field read-only
                 sx={fieldUpdateInfo.standardDeviation ? { backgroundColor: '#fffde7', transition: 'background 0.5s' } : {}}
               />
               {fieldUpdateInfo.standardDeviation && (
@@ -1074,15 +1074,15 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
           </Grid>
           <Grid item xs={12} md={6}>
             <Box sx={{ position: 'relative' }}>
-            <TextField
-              fullWidth
-              label="Total Required Sample Size"
-              value={proposalData.sampleSize}
-              onChange={handleChange('sampleSize')}
-              helperText={calculatedSampleSize 
-                ? `Value from Power Analysis: ${calculatedSampleSize}`
-                : "Run Power Analysis to calculate"}
-              disabled // Make the field read-only
+              <TextField
+                fullWidth
+                label="Total Required Sample Size"
+                value={proposalData.sampleSize}
+                onChange={handleChange('sampleSize')}
+                helperText={calculatedSampleSize 
+                  ? `Value from Power Analysis: ${calculatedSampleSize}`
+                  : "Run Power Analysis to calculate"}
+                disabled // Make the field read-only
                 sx={fieldUpdateInfo.sampleSize ? { backgroundColor: '#fffde7', transition: 'background 0.5s' } : {}}
               />
               {fieldUpdateInfo.sampleSize && (
