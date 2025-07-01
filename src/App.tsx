@@ -1092,9 +1092,8 @@ function AuthenticatedApp() {
       if (currentCampaign) {
         // Update existing campaign
         await firestoreUpdateCampaign(currentCampaign.id, {
-          csvAnalysis,
-          updatedAt: new Date()
-        });
+          csvAnalysis
+        }, user.uid);
         console.log('Campaign data saved successfully');
       } else {
         // Create new campaign

@@ -40,7 +40,7 @@ export const getCampaign = async (id: string): Promise<Campaign | null> => {
   return null;
 };
 
-export const updateCampaign = async (id: string, updates: Partial<Campaign>): Promise<void> => {
+export const updateCampaign = async (id: string, updates: Partial<Campaign>, userId: string): Promise<void> => {
   const docRef = doc(db, CAMPAIGNS_COLLECTION, id);
   let collaboratorIds;
   if (updates.collaborators) {
@@ -50,6 +50,7 @@ export const updateCampaign = async (id: string, updates: Partial<Campaign>): Pr
     ...updates,
     ...(collaboratorIds ? { collaboratorIds } : {}),
     updatedAt: serverTimestamp(),
+    updatedBy: userId,
   });
 };
 

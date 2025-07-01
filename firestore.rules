@@ -50,6 +50,11 @@ service cloud.firestore {
       allow delete: if isOwner(campaignId);
     }
 
+    // Proposal subcollection under each campaign
+    match /campaigns/{campaignId}/proposal/{proposalId} {
+      allow read, write: if isAuthorizedForCampaign(campaignId);
+    }
+
     // User profiles (read-only for authenticated company users)
     match /users/{userId} {
       allow read: if isCompanyUser();
