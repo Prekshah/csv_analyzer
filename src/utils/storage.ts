@@ -73,7 +73,6 @@ export const validateCampaignName = (name: string, existingCampaigns: Campaign[]
 // Create new campaign
 export const createCampaign = (name: string, description: string = ''): Campaign => {
   const user = getCurrentUser();
-  const now = new Date();
   
   // Validate campaign name
   const existingCampaigns = getAllCampaigns();
@@ -86,8 +85,8 @@ export const createCampaign = (name: string, description: string = ''): Campaign
     id: generateCampaignId(),
     name,
     description,
-    createdAt: now,
-    updatedAt: now,
+    createdAt: new Date(),
+    updatedAt: new Date(),
     createdBy: user.id,
     collaborators: {
       [user.id]: {
@@ -98,7 +97,7 @@ export const createCampaign = (name: string, description: string = ''): Campaign
           photoURL: undefined
         },
         role: 'owner',
-        addedAt: now,
+        addedAt: new Date(),
         addedBy: user.id
       }
     },
@@ -108,8 +107,6 @@ export const createCampaign = (name: string, description: string = ''): Campaign
 
 // Save campaign data to localStorage
 export const saveCampaignData = (campaign: Campaign, proposalData: ProposalData): void => {
-  const now = new Date().toISOString();
-  
   const updatedCampaign: Campaign = {
     ...campaign,
     updatedAt: new Date()

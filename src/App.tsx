@@ -42,7 +42,6 @@ import PowerAnalysis from './components/PowerAnalysis';
 import HypothesisTestingProposal from './components/HypothesisTestingProposal';
 import BroadcastTest from './components/BroadcastTest';
 import LoginScreen from './components/LoginScreen';
-import LoadingScreen from './components/LoadingScreen';
 import ProfileDropdown from './components/ProfileDropdown';
 import CampaignManager from './components/CampaignManager';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -1477,14 +1476,14 @@ function AuthenticatedApp() {
 
           {csvData.dependencies.length === 0 ? (
             <Paper sx={{ p: 2, mb: 3 }}>
-              <Typography color="text.secondary">
+              <Typography color="text.secondary" gutterBottom>
                 No significant dependencies found between columns. This could mean:
-                <ul>
-                  <li>The columns are mostly independent</li>
-                  <li>The relationships are weaker than our thresholds (correlation {'>'}0.5 or association {'>'}0.3)</li>
-                  <li>There is insufficient data to determine relationships</li>
-                </ul>
               </Typography>
+              <Box component="ul" sx={{ color: 'text.secondary', mt: 1 }}>
+                <li>The columns are mostly independent</li>
+                <li>The relationships are weaker than our thresholds (correlation {'>'}0.5 or association {'>'}0.3)</li>
+                <li>There is insufficient data to determine relationships</li>
+              </Box>
             </Paper>
           ) : (
             <TableContainer component={Paper} sx={{ mb: 3 }}>
@@ -1599,27 +1598,25 @@ function AuthenticatedApp() {
               <Typography><strong>Type:</strong> {stats.type}</Typography>
               <Typography><strong>Data Quality:</strong></Typography>
               <Box sx={{ pl: 2 }}>
-                <Typography>
-                  Completeness: 
-                  <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, ml: 1 }}>
-                    <LinearProgress 
-                      variant="determinate" 
-                      value={stats.completeness} 
-                      sx={{ 
-                        width: 100,
-                        height: 8,
-                        borderRadius: 4,
-                        backgroundColor: '#e0e0e0',
-                        '& .MuiLinearProgress-bar': {
-                          backgroundColor: stats.completeness > 90 ? '#2e7d32' : stats.completeness > 70 ? '#ed6c02' : '#d32f2f'
-                        }
-                      }}
-                    />
-                    <Typography variant="body2">
-                      {stats.completeness.toFixed(1)}%
-                    </Typography>
-                  </Box>
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Typography>Completeness:</Typography>
+                  <LinearProgress 
+                    variant="determinate" 
+                    value={stats.completeness} 
+                    sx={{ 
+                      width: 100,
+                      height: 8,
+                      borderRadius: 4,
+                      backgroundColor: '#e0e0e0',
+                      '& .MuiLinearProgress-bar': {
+                        backgroundColor: stats.completeness > 90 ? '#2e7d32' : stats.completeness > 70 ? '#ed6c02' : '#d32f2f'
+                      }
+                    }}
+                  />
+                  <Typography variant="body2">
+                    {stats.completeness.toFixed(1)}%
+                  </Typography>
+                </Box>
                 <Typography>Missing Values: {stats.missingCount}</Typography>
                 <Typography>Null Values: {stats.nullCount}</Typography>
               </Box>
@@ -1629,92 +1626,112 @@ function AuthenticatedApp() {
                 <Typography>Unique Values: {stats.uniqueValues}</Typography>
                 {stats.type === 'numeric' && (
                   <>
-                    <Typography variant="subtitle2" sx={{ mt: 1, mb: 0.5, color: 'primary.main' }}>
-                      Central Tendency:
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, mb: 0.5 }}>
+                      <Typography variant="subtitle2" sx={{ color: 'primary.main' }}>
+                        Central Tendency:
+                      </Typography>
                       <Tooltip title="These tell you what's 'typical' or 'normal' in your data - like finding the center point of all your values.">
                         <IconButton size="small">
                           <InfoIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
-                    </Typography>
+                    </Box>
                     <Box sx={{ pl: 2, mb: 2 }}>
-                      <Typography>
-                        Mean: <strong>{stats.mean?.toFixed(2)}</strong>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography>
+                          Mean: <strong>{stats.mean?.toFixed(2)}</strong>
+                        </Typography>
                         <Tooltip title="The average - add up all values and divide by how many you have. Can be affected by very high or low values.">
                           <IconButton size="small">
                             <InfoIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
-                      </Typography>
-                      <Typography>
-                        Median: <strong>{stats.median?.toFixed(2)}</strong>
-                        <Tooltip title="The middle value when you sort all values from lowest to highest. Less affected by extreme values than the mean.">
-                          <IconButton size="small">
-                            <InfoIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      </Typography>
-                      <Typography>
-                        Mode: <strong>{stats.mode}</strong>
-                        <Tooltip title="The most common value that appears most frequently in your data.">
-                          <IconButton size="small">
-                            <InfoIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      </Typography>
+                      </Box>
+                                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Typography>
+                            Median: <strong>{stats.median?.toFixed(2)}</strong>
+                          </Typography>
+                          <Tooltip title="The middle value when you sort all values from lowest to highest. Less affected by extreme values than the mean.">
+                            <IconButton size="small">
+                              <InfoIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
+                                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Typography>
+                            Mode: <strong>{stats.mode}</strong>
+                          </Typography>
+                          <Tooltip title="The most common value that appears most frequently in your data.">
+                            <IconButton size="small">
+                              <InfoIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
                     </Box>
                     
-                    <Typography variant="subtitle2" sx={{ mt: 1, mb: 0.5, color: 'primary.main' }}>
-                      Range & Percentiles:
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, mb: 0.5 }}>
+                      <Typography variant="subtitle2" sx={{ color: 'primary.main' }}>
+                        Range & Percentiles:
+                      </Typography>
                       <Tooltip title="Shows the spread of your data - from the smallest to largest values, and key points in between.">
                         <IconButton size="small">
                           <InfoIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
-                    </Typography>
+                    </Box>
                     <Box sx={{ pl: 2, mb: 2 }}>
-                      <Typography>
-                        Minimum: <strong>{stats.min?.toFixed(2)}</strong>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography>
+                          Minimum: <strong>{stats.min?.toFixed(2)}</strong>
+                        </Typography>
                         <Tooltip title="The smallest value in your data.">
                           <IconButton size="small">
                             <InfoIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
-                      </Typography>
-                      <Typography>
-                        Maximum: <strong>{stats.max?.toFixed(2)}</strong>
+                      </Box>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography>
+                          Maximum: <strong>{stats.max?.toFixed(2)}</strong>
+                        </Typography>
                         <Tooltip title="The largest value in your data.">
                           <IconButton size="small">
                             <InfoIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
-                      </Typography>
-                      <Typography>
-                        25th Percentile (Q1): <strong>{stats.percentile25?.toFixed(2)}</strong>
+                      </Box>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography>
+                          25th Percentile (Q1): <strong>{stats.percentile25?.toFixed(2)}</strong>
+                        </Typography>
                         <Tooltip title="25% of your data falls below this value. It's like saying 'most values are above this point.'">
                           <IconButton size="small">
                             <InfoIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
-                      </Typography>
-                      <Typography>
-                        75th Percentile (Q3): <strong>{stats.percentile75?.toFixed(2)}</strong>
+                      </Box>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography>
+                          75th Percentile (Q3): <strong>{stats.percentile75?.toFixed(2)}</strong>
+                        </Typography>
                         <Tooltip title="75% of your data falls below this value. It's like saying 'most values are below this point.'">
                           <IconButton size="small">
                             <InfoIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
-                      </Typography>
+                      </Box>
                     </Box>
                     
-                    <Typography variant="subtitle2" sx={{ mt: 1, mb: 0.5, color: 'primary.main' }}>
-                      Distribution Shape:
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, mb: 0.5 }}>
+                      <Typography variant="subtitle2" sx={{ color: 'primary.main' }}>
+                        Distribution Shape:
+                      </Typography>
                       <Tooltip title="These describe how your data is spread out and shaped - like whether it's evenly distributed or bunched up in certain areas.">
                         <IconButton size="small">
                           <InfoIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
-                    </Typography>
+                    </Box>
                     <Box sx={{ pl: 2 }}>
                       <Typography>
                         Standard Deviation: <strong>{stats.standardDeviation?.toFixed(2)}</strong>

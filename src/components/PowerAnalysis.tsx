@@ -5,7 +5,6 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  TextField,
   Typography,
   Paper,
   Grid,
@@ -95,7 +94,6 @@ const calculateVAF = (ratio1: number, ratio2: number): number => {
 
 const calculateGroupSampleSizes = (totalSize: number, ratios: AllocationRatio[]): Map<string, number> => {
   const groupSizes = new Map<string, number>();
-  let remainingSize = totalSize;
   let allocatedSize = 0;
 
   // First pass: Calculate raw sizes and floor them
@@ -370,12 +368,11 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
       
       // First calculate the total with rounded down values
       const totalWithBase = baseRatio * numGroups;
-      const remaining = +(100 - totalWithBase).toFixed(2);
       
       for (let i = 0; i < numGroups; i++) {
         let ratio: number;
         if (i === 1) { // Variant A always gets the remaining amount
-          ratio = +(baseRatio + remaining).toFixed(2);
+          ratio = +(baseRatio + (100 - totalWithBase)).toFixed(2);
         } else {
           ratio = baseRatio;
         }
@@ -396,14 +393,10 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
       const baseRatio = Math.floor((100 / numGroups) * 100) / 100; // Round down to 2 decimals
       const newRatios: AllocationRatio[] = [];
       
-      // First calculate the total with rounded down values
-      const totalWithBase = baseRatio * numGroups;
-      const remaining = +(100 - totalWithBase).toFixed(2);
-      
       for (let i = 0; i < numGroups; i++) {
         let ratio: number;
         if (i === 1) { // Variant A always gets the remaining amount
-          ratio = +(baseRatio + remaining).toFixed(2);
+          ratio = +(baseRatio + (100 - (baseRatio * numGroups))).toFixed(2);
         } else {
           ratio = baseRatio;
         }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Box,
   Button,
@@ -19,7 +19,6 @@ import {
   Alert,
   CircularProgress,
   FormHelperText,
-  Skeleton,
   List,
   ListItem,
   ListItemText,
@@ -90,55 +89,110 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
   const [sortOption, setSortOption] = useState<'lastModified' | 'alphabetical' | 'createdAt'>('lastModified');
   const [filterOption, setFilterOption] = useState<'all' | 'owned' | 'shared'>('all');
 
-  useEffect(() => {
-    console.log('[CampaignManager] useEffect run. authLoading:', authLoading, 'user:', user);
-    if (unsubscribeRef.current) {
-      unsubscribeRef.current();
-      unsubscribeRef.current = null;
+  console.log('[DEBUG][CampaignManager] user:', user);
+
+  // Helper to safely convert date fields to timestamps
+  const getTime = (value: any): number => {
+    if (!value) return 0;
+    if (typeof value === 'string') return new Date(value).getTime();
+    if (value.toDate) return value.toDate().getTime(); // Firestore Timestamp
+    if (value instanceof Date) return value.getTime();
+    return 0;
+  };
+
+  // Derived campaigns list with filtering and sorting
+  const filteredAndSortedCampaigns = useMemo(() => {
+    let result = [...campaigns];
+
+    // Filtering
+    if (filterOption === 'owned') {
+      result = result.filter(c => c.createdBy === user?.uid);
+    } else if (filterOption === 'shared') {
+      result = result.filter(c => c.createdBy !== user?.uid);
     }
-    if (authLoading || !user) return;
-    console.log('[CampaignManager] Fetching campaigns for user:', user.uid);
-    setLoading(true);
+
+    // Sorting
+    if (sortOption === 'lastModified') {
+      result.sort((a, b) => {
+        const aTime = getTime(a.updatedAt) || getTime(a.createdAt);
+        const bTime = getTime(b.updatedAt) || getTime(b.createdAt);
+        return bTime - aTime;
+      });
+    } else if (sortOption === 'alphabetical') {
+      const isAlpha = (name: string) => /^[a-zA-Z]/.test(name || '');
+      const isNum = (name: string) => /^[0-9]/.test(name || '');
+      result.sort((a, b) => {
+        const nameA = (a.name || '').trim();
+        const nameB = (b.name || '').trim();
+        const aAlpha = isAlpha(nameA), bAlpha = isAlpha(nameB);
+        const aNum = isNum(nameA), bNum = isNum(nameB);
+
+        if (aAlpha !== bAlpha) return aAlpha ? -1 : 1;
+        if (aAlpha && bAlpha) return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+        if (aNum && bNum) {
+          const numA = parseInt(nameA, 10), numB = parseInt(nameB, 10);
+          if (!isNaN(numA) && !isNaN(numB) && numA !== numB) return numA - numB;
+        }
+        return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+      });
+    } else if (sortOption === 'createdAt') {
+      result.sort((a, b) => getTime(b.createdAt) - getTime(a.createdAt));
+    }
+
+    return result;
+  }, [campaigns, filterOption, sortOption, user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      console.warn('[DEBUG][CampaignManager] No user or UID, skipping campaign subscription.');
+      return;
+    }
+    console.log('[DEBUG][CampaignManager] Subscribing to campaigns for UID:', user.uid);
     const unsubscribe = subscribeToUserCampaigns(user.uid, (userCampaigns) => {
       try {
-        // Debug log for updatedAt
-        userCampaigns.forEach(c => {
-          console.log('[DEBUG] Campaign from Firestore:', {
-            id: c.id,
-            name: c.name,
-            updatedAt: c.updatedAt,
-            createdAt: c.createdAt
-          });
-        });
-        // Defensive: filter out campaigns with invalid collaboratorIds
-        const validCampaigns = userCampaigns.filter(c => Array.isArray(c.collaboratorIds) && c.collaboratorIds.every(id => typeof id === 'string'));
-        // Sort campaigns by most recently accessed (updatedAt or createdAt)
-        const sortedCampaigns = [...validCampaigns].sort((a, b) => {
-          const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
-          const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
-          return bTime - aTime;
-        });
-        setCampaigns(sortedCampaigns);
-        setLoading(false);
-        if (deletingCampaignId && !sortedCampaigns.some(c => c.id === deletingCampaignId)) {
-          setShowDeleteSpinner(false);
-          setDeletingCampaignId(null);
+        console.log('[DEBUG][CampaignManager] Received campaigns from Firestore:', userCampaigns);
+        if (!Array.isArray(userCampaigns)) {
+          console.warn('[Firestore] Received non-array campaigns:', userCampaigns);
+          return;
         }
+
+        const validCampaigns = userCampaigns.filter((c) =>
+          c &&
+          typeof c === 'object' &&
+          Array.isArray(c.collaboratorIds) &&
+          c.collaboratorIds.every((id) => typeof id === 'string') &&
+          typeof c.collaborators === 'object' &&
+          c.collaborators !== null &&
+          Object.values(c.collaborators).every((val) => typeof val === 'object')
+        );
+
+        const transformed = validCampaigns.map((c) => {
+          const me = c.collaborators[user.uid];
+          const isOwner = me?.role === 'owner';
+          return { ...c, isOwner };
+        });
+
+        setCampaigns(transformed);
       } catch (err) {
-        console.error('[CampaignManager] Error in Firestore subscription callback:', err);
+        console.error('[DEBUG][CampaignManager] [subscribeToUserCampaigns] Listener error:', err);
       }
     });
+
     unsubscribeRef.current = unsubscribe;
+
     return () => {
       if (unsubscribeRef.current) {
         unsubscribeRef.current();
         unsubscribeRef.current = null;
       }
     };
-  }, [user, authLoading, deletingCampaignId]);
+  }, [user?.uid]);
 
   const handleCreateCampaign = async () => {
-    if (!user || !newCampaignName.trim()) return;
+    if (!user || !newCampaignName.trim()) {
+      console.warn('[DEBUG][CampaignManager] Cannot create campaign: missing user or campaign name.');
+      return;
+    }
     setCreating(true);
     setCreateDialogOpen(false);
     try {
@@ -176,8 +230,11 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
         campaignData.description = newCampaignDescription.trim();
       }
 
-      console.log('[DEBUG] Creating campaign with data:', campaignData, 'User ID:', user.uid);
+      // Log the final campaign object before creation
+      console.log('[DEBUG][CampaignManager] Final campaignData before create:', JSON.stringify(campaignData, null, 2));
+
       await firestoreCreateCampaign(campaignData, user.uid);
+      console.log('[DEBUG][CampaignManager] Campaign creation successful.');
 
       setNewCampaignName('');
       setNewCampaignDescription('');
@@ -188,7 +245,7 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to create campaign. Please try again.';
       setError(errorMessage);
-      console.error('Error creating campaign:', err);
+      console.error('[DEBUG][CampaignManager] Error creating campaign:', err);
     } finally {
       setCreating(false);
     }
@@ -469,63 +526,8 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
 
       {/* Campaigns Grid */}
       {(() => {
-        // Filtering
-        let filteredCampaigns = campaigns;
-        if (filterOption === 'owned') {
-          filteredCampaigns = campaigns.filter(c => c.createdBy === user?.uid);
-        } else if (filterOption === 'shared') {
-          filteredCampaigns = campaigns.filter(c => c.createdBy !== user?.uid);
-        }
-        // Sorting
-        let sortedCampaigns = [...filteredCampaigns];
-        if (sortOption === 'lastModified') {
-          // Only consider campaigns as modified if they have csvAnalysis (i.e., user uploaded and analyzed a CSV)
-          sortedCampaigns.sort((a, b) => {
-            const aHasAnalysis = !!a.csvAnalysis;
-            const bHasAnalysis = !!b.csvAnalysis;
-            if (aHasAnalysis && !bHasAnalysis) return -1;
-            if (!aHasAnalysis && bHasAnalysis) return 1;
-            // If both have or both don't have analysis, sort by updatedAt or createdAt
-            const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
-            const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
-            return bTime - aTime;
-          });
-        } else if (sortOption === 'alphabetical') {
-          // Letters (A-Z) first, then numbers (0-9)
-          const isAlpha = (name: string) => /^[a-zA-Z]/.test(name);
-          const isNum = (name: string) => /^[0-9]/.test(name);
-          sortedCampaigns.sort((a, b) => {
-            const nameA = (a.name || '').trim();
-            const nameB = (b.name || '').trim();
-            const aAlpha = isAlpha(nameA);
-            const bAlpha = isAlpha(nameB);
-            const aNum = isNum(nameA);
-            const bNum = isNum(nameB);
-            if (aAlpha && !bAlpha) return -1;
-            if (!aAlpha && bAlpha) return 1;
-            if (aAlpha && bAlpha) {
-              // Both alpha, sort A-Z
-              return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
-            }
-            if (aNum && bNum) {
-              // Both numbers, sort numerically then alphabetically
-              const numA = parseInt(nameA, 10);
-              const numB = parseInt(nameB, 10);
-              if (!isNaN(numA) && !isNaN(numB) && numA !== numB) return numA - numB;
-              return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
-            }
-            // If neither alpha nor num, fallback to normal compare
-            return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
-          });
-        } else if (sortOption === 'createdAt') {
-          sortedCampaigns.sort((a, b) => {
-            const aTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-            const bTime = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-            return bTime - aTime;
-          });
-        }
         // Empty state logic
-        if (sortedCampaigns.length === 0) {
+        if (filteredAndSortedCampaigns.length === 0) {
           if (filterOption === 'shared') {
             return (
               <Card>
@@ -585,7 +587,7 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
         // Render campaigns grid
         return (
           <Grid container spacing={3}>
-            {sortedCampaigns.map((campaign) => (
+            {filteredAndSortedCampaigns.map((campaign) => (
               <Grid item xs={12} md={6} lg={4} key={campaign.id}>
                 <Card 
                   sx={{ 
@@ -664,7 +666,7 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
                       <Box display="flex" alignItems="center" gap={0.5}>
                         <ScheduleIcon fontSize="small" color="action" sx={{ opacity: 0.7 }} />
                         <Typography variant="caption" color="text.secondary">
-                          Created {formatDate(campaign.createdAt)} by {campaign.collaborators && campaign.collaborators[campaign.createdBy]?.user.displayName || campaign.collaborators && campaign.collaborators[campaign.createdBy]?.user.email || 'Unknown'}
+                          Created {formatDate(campaign.createdAt)} by {(campaign.collaborators && campaign.collaborators[campaign.createdBy]?.user.displayName) || (campaign.collaborators && campaign.collaborators[campaign.createdBy]?.user.email) || 'Unknown'}
                         </Typography>
                       </Box>
                     </Box>

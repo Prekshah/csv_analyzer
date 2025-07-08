@@ -47,6 +47,7 @@ import { collaborationManager } from '../utils/collaboration';
 import CollaborativeTextField from './CollaborativeTextField';
 import {
   subscribeToProposalData,
+  updateProposal,
 } from '../utils/firestoreProposalService';
 import { useAuth } from '../contexts/AuthContext';
 import { subscribeToPowerAnalysisData } from '../utils/firestoreCampaignService';
@@ -89,7 +90,6 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
   const [currentCampaign, setCurrentCampaign] = useState<Campaign | null>(null);
   const [availableCampaigns, setAvailableCampaigns] = useState<Campaign[]>([]);
   const [proposalData, setProposalData] = useState<ProposalData>(getDefaultProposalData());
-  const [currentVersion, setCurrentVersion] = useState<number>(Date.now());
   
   // UI state
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved');
@@ -136,14 +136,13 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
     };
   }, []);
 
-  // Update debouncedSave to use Firestore
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const debouncedSave = useCallback(
     debounce(async (campaign: Campaign, data: ProposalData) => {
       if (campaign) {
         setSaveStatus('saving');
         try {
           await saveCampaignData(campaign, data);
-          setCurrentVersion(Date.now());
           setSaveStatus('saved');
         } catch (error) {
           console.error('Error saving proposal data:', error);
@@ -151,7 +150,7 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
         }
       }
     }, 2000),
-    []
+    [debounce, saveCampaignData, setSaveStatus]
   );
 
   const createNewCampaign = (name: string, description: string = '') => {
@@ -164,8 +163,6 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
     // Update state
     setCurrentCampaign(campaign);
     setProposalData(defaultData);
-    setCurrentVersion(Date.now());
-    setSaveStatus('saved');
     
     // Initialize collaboration for new campaign
     collaborationManager.initializeCampaign(campaign.id);
@@ -198,12 +195,14 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
     const campaigns = getAllCampaigns();
     setAvailableCampaigns(campaigns);
     
-    // Load the most recent campaign if available
-    if (campaigns.length > 0 && !currentCampaign) {
+    // If campaignId is provided as prop, use it; otherwise load the most recent campaign
+    if (campaignId) {
+      loadCampaign(campaignId);
+    } else if (campaigns.length > 0 && !currentCampaign) {
       loadCampaign(campaigns[0].id);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [campaignId]);
 
   // Set up collaboration listener
   useEffect(() => {
@@ -276,18 +275,11 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
       const campaignData = loadCampaignData(currentCampaign.id);
       if (campaignData) {
         setProposalData(campaignData.proposalData);
-        setCurrentVersion(campaignData.version);
-        setSaveStatus('saved');
       }
       
       // Force collaboration state refresh
       collaborationManager.initializeCampaign(currentCampaign.id);
     }
-  };
-
-  // Helper function to get user initials
-  const getUserInitials = (name: string): string => {
-    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
   };
 
   // Update values when PowerAnalysis values change
@@ -325,7 +317,7 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
     handleFieldUpdate(field, newValue);
   };
 
-  // Update handleFieldUpdate to use Firestore
+  // Update handleFieldUpdate to use updateProposal
   const handleFieldUpdate = (field: keyof ProposalData, newValue: string) => {
     if (!field || typeof field !== 'string') {
       return;
@@ -340,7 +332,8 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
         }
       }
       if (currentCampaign) {
-        debouncedSave(currentCampaign, newData);
+        // Use updateProposal to update both proposal and parent campaign's updatedAt
+        updateProposal(currentCampaign.id, { [field]: newData[field] });
       }
       return newData;
     });
@@ -379,14 +372,11 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
       case 'use-latest':
         setCurrentCampaign(conflictData.saved.campaign);
         setProposalData(conflictData.saved.proposalData);
-        setCurrentVersion(conflictData.saved.version);
-        setSaveStatus('saved');
         break;
       case 'keep-mine':
         // Save current version as the latest
         if (currentCampaign) {
           saveCampaignData(currentCampaign, proposalData);
-          setCurrentVersion(Date.now());
         }
         break;
       case 'show-diff':
@@ -601,8 +591,6 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
   useEffect(() => {
     // Reset state when campaignId changes
     setProposalData(getInitialProposalState());
-    setCurrentVersion(Date.now());
-    setSaveStatus('saved');
     // TODO: Unsubscribe from previous Firestore listeners and subscribe to new campaign if needed
     // Return cleanup function to unsubscribe
     return () => {
@@ -649,6 +637,31 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
     return () => unsubscribe && unsubscribe();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentCampaign, proposalData, user]);
+
+  // DEV ONLY: To clear local Firestore cache, run in console:
+  // indexedDB.deleteDatabase('firebase-firestore-database') // <- for dev only
+
+  // In the useEffect for subscribing to proposal data:
+  useEffect(() => {
+    if (!currentCampaign) return;
+    let unsub: (() => void) | null = null;
+    unsub = subscribeToProposalData(currentCampaign.id, (data) => {
+      if (data === null) {
+        console.warn(`[Proposal] No proposal document found for campaign ${currentCampaign.id}`);
+        setProposalData(getDefaultProposalData()); // or set to null and handle in UI
+        return;
+      }
+      setProposalData(data);
+    });
+    return () => {
+      if (unsub) unsub();
+    };
+  }, [currentCampaign]);
+
+  // In the render logic, skip rendering or show a message if proposalData is null
+  if (!proposalData) {
+    return <Box sx={{ p: 4, textAlign: 'center' }}><Typography>No proposal data found for this campaign.</Typography></Box>;
+  }
 
   return (
     <Box sx={{ maxWidth: '1200px', margin: 'auto', padding: 2 }}>
@@ -707,37 +720,47 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
       <Card sx={{ mb: 3, bgcolor: 'background.paper' }}>
         <CardContent>
           <Grid container spacing={2} alignItems="center">
-            <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Campaign</InputLabel>
-                <Select
-                  value={currentCampaign?.id || ''}
-                  onChange={handleCampaignSelect}
-                  label="Campaign"
-                >
-                  {availableCampaigns.map(campaign => (
-                    <MenuItem key={campaign.id} value={campaign.id}>
-                      <Box>
-                        <Typography variant="body1">{campaign.name}</Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {campaign.description}
-                        </Typography>
+            {/* Only show campaign dropdown if no campaignId is provided */}
+            {!campaignId && (
+              <Grid item xs={12} md={6}>
+                <FormControl fullWidth>
+                  <InputLabel>Campaign</InputLabel>
+                  <Select
+                    value={currentCampaign?.id || ''}
+                    onChange={handleCampaignSelect}
+                    label="Campaign"
+                  >
+                    {availableCampaigns.map(campaign => (
+                      <MenuItem key={campaign.id} value={campaign.id}>
+                        <Box>
+                          <Typography variant="body1">{campaign.name}</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {campaign.description}
+                          </Typography>
+                        </Box>
+                      </MenuItem>
+                    ))}
+                    <Divider />
+                    <MenuItem value="new">
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <AddIcon fontSize="small" />
+                        <Typography>Create New Campaign</Typography>
                       </Box>
                     </MenuItem>
-                  ))}
-                  <Divider />
-                  <MenuItem value="new">
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <AddIcon fontSize="small" />
-                      <Typography>Create New Campaign</Typography>
-                    </Box>
-                  </MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} md={6}>
+                  </Select>
+                </FormControl>
+              </Grid>
+            )}
+            
+            {/* Campaign info section - show campaign name prominently when campaignId is provided */}
+            <Grid item xs={12} md={campaignId ? 12 : 6}>
               {currentCampaign && (
                 <Box>
+                  {campaignId && (
+                    <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold' }}>
+                      Campaign: {currentCampaign.name}
+                    </Typography>
+                  )}
                   <Typography variant="body2" color="text.secondary">
                     <strong>Last modified:</strong> {currentCampaign.updatedAt ? formatRelativeTime(
                       currentCampaign.updatedAt instanceof Date 
@@ -794,7 +817,11 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
                             }}
                           />
                         ))}
-                        {activeUsers.length > 3 && (
+                        // eslint-disable-next-line no-mixed-operators
+                        {(activeUsers.length > 3 &&
+                          (activeUsers.some(u => u.userId === user?.uid) ||
+                            activeUsers.some(u => u.userId === currentCampaign?.createdBy))
+                        ) && (
                           <Chip
                             size="small"
                             label={`+${activeUsers.length - 3}`}

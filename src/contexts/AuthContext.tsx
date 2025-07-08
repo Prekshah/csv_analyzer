@@ -29,6 +29,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     const saveUserToFirestore = async (firebaseUser: FirebaseUser) => {
       if (!firebaseUser) return;
+      
+      // Add a small delay to ensure auth token is ready
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
       try {
         await setDoc(doc(db, 'users', firebaseUser.uid), {
           uid: firebaseUser.uid,
@@ -36,13 +40,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           displayName: firebaseUser.displayName || '',
           photoURL: firebaseUser.photoURL || ''
         }, { merge: true });
-      } catch (e) {
-        // Optionally log error
-        console.error('Failed to save user to Firestore:', e);
+        console.log('[AuthContext] User saved to Firestore successfully');
+      } catch (e: any) {
+        console.error('[AuthContext] Failed to save user to Firestore:', e?.code, e?.message);
+        // Don't throw the error - user can still use the app
       }
     };
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-      console.log('[AuthContext] onAuthStateChanged fired. User:', firebaseUser?.uid, firebaseUser?.email);
+      console.log('[DEBUG][Auth] onAuthStateChanged fired. User:', firebaseUser?.uid, firebaseUser?.email);
       if (firebaseUser) {
         // Enforce @games24x7.com domain restriction
         if (firebaseUser.email && firebaseUser.email.endsWith('@games24x7.com')) {
