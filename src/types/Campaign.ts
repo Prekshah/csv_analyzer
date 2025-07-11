@@ -39,10 +39,76 @@ export interface CSVAnalysis {
   fileName: string;
   fileSize: number;
   uploadedAt: Date;
+  // Enhanced fields for versioning and collaboration
+  contentHash: string; // SHA-256 hash of CSV content for version identification
+  uploadedBy: string; // uid of user who uploaded
+  isActive?: boolean; // whether this is the currently active CSV
 }
 
+// New interface for CSV file metadata with versioning
+export interface CSVFileVersion {
+  id: string; // unique identifier for this CSV version
+  fileName: string;
+  contentHash: string;
+  fileSize: number;
+  uploadedAt: Date;
+  uploadedBy: string;
+  isActive: boolean;
+  // Store the actual CSV content for easy retrieval
+  csvContent?: string; // base64 encoded CSV content
+  analysis?: CSVAnalysis;
+}
+
+// Tab-specific state for each CSV version
+export interface TabState {
+  // Summary tab state
+  selectedDependentMetric: string;
+  manualMetricInput: string;
+  
+  // Power Analysis tab state
+  powerAnalysisState: {
+    selectedMetric: string;
+    alpha: string;
+    beta: string;
+    mde: string;
+    customMde: string;
+    mdeType: 'absolute' | 'percentage';
+    testType: string;
+    numPaths: string;
+    customPaths: string;
+    allocationRatios: Array<{name: string; ratio: string}>;
+    results?: any;
+  };
+  
+  // Analysis results and UI state
+  calculatedSampleSize: string;
+  calculatedVariance: string;
+  
+  // Last updated timestamp and user
+  lastUpdatedAt: Date;
+  lastUpdatedBy: string;
+}
+
+// Campaign state for each CSV version
+export interface CampaignCSVState {
+  csvVersionId: string;
+  activeTab: number;
+  tabStates: TabState;
+  // Version-specific proposal data overrides (if any)
+  proposalDataOverrides?: Partial<ProposalData>;
+}
+
+// Enhanced Campaign interface with multi-CSV support
 export interface Campaign extends CampaignMetadata {
+  // Legacy single CSV support (for backward compatibility)
   csvAnalysis?: CSVAnalysis;
+  
+  // New multi-CSV support
+  csvVersions?: Record<string, CSVFileVersion>; // csvVersionId -> CSVFileVersion
+  csvStates?: Record<string, CampaignCSVState>; // csvVersionId -> CampaignCSVState
+  activeCsvVersionId?: string; // currently active CSV version
+  
+  // Other existing fields
   powerAnalysisResults?: PowerAnalysisResult[];
   hypothesisTests?: HypothesisTest[];
   collaboratorIds?: string[];
@@ -135,6 +201,62 @@ export interface CampaignData {
   version: number;
 }
 
+// Enhanced data model for versioned proposal fields
+export interface ProposalFieldHistory {
+  value: string;
+  updatedAt: Date | FieldValue;
+  updatedBy: {
+    uid: string;
+    displayName: string;
+  };
+}
+
+export interface ProposalField {
+  value: string;
+  lastUpdatedAt: Date | FieldValue;
+  lastUpdatedBy: {
+    uid: string;
+    displayName: string;
+  };
+  history?: ProposalFieldHistory[];
+}
+
+// Enhanced proposal data with versioned fields
+export interface EnhancedProposalData {
+  title: ProposalField;
+  architects: ProposalField;
+  date: ProposalField;
+  businessProblem: ProposalField;
+  whyThisMatters: ProposalField;
+  quantifyImpact: ProposalField;
+  potentialBenefit: ProposalField;
+  previousWork: ProposalField;
+  researchQuestion: ProposalField;
+  nullHypothesis: ProposalField;
+  alternativeHypothesis: ProposalField;
+  studyType: ProposalField;
+  targetPopulation: ProposalField;
+  samplingStrategy: ProposalField;
+  eda: ProposalField;
+  mde: ProposalField;
+  power: ProposalField;
+  significanceLevel: ProposalField;
+  standardDeviation: ProposalField;
+  sampleSize: ProposalField;
+  usersPerDay: ProposalField;
+  expectedDays: ProposalField;
+  primaryMetrics: ProposalField;
+  secondaryMetrics: ProposalField;
+  guardrailMetrics: ProposalField;
+  potentialRisks: ProposalField;
+  sanityChecks: ProposalField;
+  statisticalTests: ProposalField;
+  segments: ProposalField;
+  fwerCorrection: ProposalField;
+  comments: ProposalField;
+}
+
+// Legacy proposal data interface (keeping for backward compatibility)
 export interface ProposalData {
   title: string;
   architects: string;
@@ -167,6 +289,17 @@ export interface ProposalData {
   segments: string;
   fwerCorrection: string;
   comments: string;
+}
+
+// Utility type for field update operations
+export interface FieldUpdateOperation {
+  fieldName: keyof EnhancedProposalData;
+  newValue: string;
+  updatedBy: {
+    uid: string;
+    displayName: string;
+  };
+  timestamp: Date;
 }
 
 export interface ConflictData {
@@ -202,7 +335,7 @@ export interface UserPresence {
 }
 
 export interface BroadcastMessage {
-  type: 'FIELD_UPDATE' | 'FIELD_FOCUS' | 'FIELD_BLUR' | 'USER_JOIN' | 'USER_LEAVE' | 'CONFLICT_DETECTED' | 'OVERRIDE_ATTEMPT';
+  type: 'FIELD_UPDATE' | 'FIELD_FOCUS' | 'FIELD_BLUR' | 'USER_JOIN' | 'USER_LEAVE' | 'CONFLICT_DETECTED' | 'OVERRIDE_ATTEMPT' | 'CSV_VERSION_SWITCH' | 'TAB_SWITCH' | 'CSV_STATE_UPDATE' | 'TAB_STATE_UPDATE' | 'USER_HEARTBEAT';
   campaignId: string;
   userId: string;
   userName: string;
@@ -213,6 +346,13 @@ export interface BroadcastMessage {
     previousValue?: string;
     lockDuration?: number;
     originalUser?: string;
+    // Enhanced collaboration fields
+    csvVersionId?: string;
+    previousCsvVersionId?: string;
+    newCsvVersionId?: string;
+    tabIndex?: number;
+    state?: any;
+    tabState?: any;
   };
 }
 

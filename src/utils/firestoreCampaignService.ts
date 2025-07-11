@@ -127,8 +127,8 @@ export const subscribeToUserCampaigns = (userId: string, callback: (campaigns: C
         campaigns.push(campaign);
       });
       
-      console.log('[DEBUG][firestoreCampaignService] subscribeToUserCampaigns snapshot result:', campaigns);
-      callback(campaigns);
+    console.log('[DEBUG][firestoreCampaignService] subscribeToUserCampaigns snapshot result:', campaigns);
+    callback(campaigns);
     },
     (error) => {
       console.error('[DEBUG][firestoreCampaignService] Query error:', error);

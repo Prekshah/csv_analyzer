@@ -37,7 +37,6 @@ googleProvider.setCustomParameters({
 
 // Additional security: Request specific scopes
 googleProvider.addScope('email');
-googleProvider.addScope('profile');
 
 // Company domain for validation
 export const COMPANY_DOMAIN = 'games24x7.com';

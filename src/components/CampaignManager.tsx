@@ -60,7 +60,7 @@ type CollaboratorRole = 'editor' | 'viewer' | 'owner';
 const validRoles: CollaboratorRole[] = ['editor', 'viewer', 'owner'];
 
 const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onNewCampaign }) => {
-  const { user, loading: authLoading } = useAuth();
+  const { user } = useAuth();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);

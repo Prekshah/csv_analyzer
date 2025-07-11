@@ -13,80 +13,42 @@ service cloud.firestore {
              request.auth.token.email.matches('.*@games24x7.com');
     }
 
-    // Fixed: Use resource.data to avoid circular dependency
-    function isCollaboratorById(campaignId) {
-      return isCompanyUser() &&
-             request.auth.uid in resource.data.collaboratorIds;
-    }
-
     // For subcollections, we need to get the parent campaign document
     function isCollaboratorByIdForSubcollection(campaignId) {
       let campaign = get(/databases/$(database)/documents/campaigns/$(campaignId));
       return isCompanyUser() &&
-             campaign.exists() &&
-             request.auth.uid in campaign.data.collaboratorIds;
+             campaign != null &&
+             campaign.data != null &&
+             (request.auth.uid in campaign.data.collaboratorIds || 
+              request.auth.uid == campaign.data.createdBy);
     }
 
-    function canEditCampaign(campaignId) {
-      let userId = request.auth.uid;
-      return isCompanyUser() &&
-             userId in resource.data.collaboratorIds &&
-             resource.data.collaborators[userId].role in ['owner', 'editor'];
-    }
+    // --- Campaign Rules ---
 
-    function isOwner(campaignId) {
-      let userId = request.auth.uid;
-      return isCompanyUser() &&
-             userId in resource.data.collaboratorIds &&
-             resource.data.collaborators[userId].role == 'owner';
-    }
-
-    // --- Rules Per Collection ---
-
-    // Campaign documents
     match /campaigns/{campaignId} {
-      // 🔒 Fixed: Use collaboratorIds array to avoid circular dependency
-      allow read: if isCompanyUser() && 
-                  request.auth.uid in resource.data.collaboratorIds;
+      // Allow read if user is authenticated with company email
+      allow read: if isCompanyUser();
+      
+      // Allow write if user is authenticated with company email and is a collaborator
+      allow write: if isCollaboratorByIdForSubcollection(campaignId);
 
-      // Allow listing/querying campaigns where user is a collaborator
-      // This is critical for the array-contains query to work
-      // TEMPORARILY VERY PERMISSIVE FOR DEBUGGING
-      allow list: if true;
-
-      allow update: if canEditCampaign(campaignId);
-
-      allow create: if isCompanyUser() &&
-                    request.auth.uid in resource.data.collaboratorIds &&
-                    request.auth.uid in resource.data.collaborators.keys() &&
-                    resource.data.collaborators[request.auth.uid].role == 'owner';
-
-      allow delete: if isOwner(campaignId);
-    }
-
-    // Proposal documents (1-per-campaign) - TEMPORARILY PERMISSIVE
-    match /campaigns/{campaignId}/proposal/{proposalId} {
-      allow read, write, create: if true;
-    }
-
-    // User profile documents - TEMPORARILY PERMISSIVE
-    match /users/{userId} {
-      allow read, write, create: if true;
-    }
-
-    // Real-time presence documents - TEMPORARILY PERMISSIVE
-    match /presence/{campaignId}/users/{userId} {
-      allow read, write, create: if true;
-    }
-
-    // Campaign activity logs - TEMPORARILY PERMISSIVE
-    match /activity/{campaignId}/logs/{logId} {
-      allow read, write, create: if true;
-    }
-
-    // Block everything else
-    match /{document=**} {
-      allow read, write: if false;
+      // Allow access to proposal subcollection and its documents
+      match /proposal/{proposalId} {
+        // Allow read if user is a collaborator
+        allow read: if isCollaboratorByIdForSubcollection(campaignId);
+        
+        // Allow write if user is a collaborator
+        allow write: if isCollaboratorByIdForSubcollection(campaignId);
+        
+        // Allow access to template document within proposal subcollection
+        match /template/{document=**} {
+          // Allow read if user is a collaborator
+          allow read: if isCollaboratorByIdForSubcollection(campaignId);
+          
+          // Allow write if user is a collaborator
+          allow write: if isCollaboratorByIdForSubcollection(campaignId);
+        }
+      }
     }
   }
 }

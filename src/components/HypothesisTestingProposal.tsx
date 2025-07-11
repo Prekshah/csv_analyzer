@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box,
   TextField,
@@ -33,24 +33,23 @@ import Badge from '@mui/material/Badge';
 import { styled } from '@mui/material/styles';
 import { Document, Packer, Paragraph, HeadingLevel, TextRun } from 'docx';
 import { saveAs } from 'file-saver';
-import { Campaign, ConflictData, SaveStatus, ProposalData, CollaborationState, UserPresence } from '../types/Campaign';
+import { Campaign, ConflictData, SaveStatus, ProposalData, CollaborationState, UserPresence, EnhancedProposalData } from '../types/Campaign';
 import { 
   createCampaign, 
   saveCampaignData, 
   loadCampaignData, 
   getAllCampaigns, 
   getDefaultProposalData,
-  debounce,
 } from '../utils/storage';
 import { formatRelativeTime } from '../utils/userUtils';
 import { collaborationManager } from '../utils/collaboration';
-import CollaborativeTextField from './CollaborativeTextField';
+import { EnhancedProposalField } from './EnhancedProposalField';
 import {
-  subscribeToProposalData,
-  updateProposal,
+  subscribeToProposalData
 } from '../utils/firestoreProposalService';
 import { useAuth } from '../contexts/AuthContext';
 import { subscribeToPowerAnalysisData } from '../utils/firestoreCampaignService';
+import { useProposalSync } from '../hooks/useProposalSync';
 
 const StyledPaper = styled(Paper)(({ theme }) => ({
   padding: theme.spacing(3),
@@ -62,6 +61,22 @@ const SectionTitle = styled(Typography)(({ theme }) => ({
   fontWeight: 'bold',
   marginBottom: theme.spacing(2),
   marginTop: theme.spacing(2),
+}));
+
+// Add a debug component near the top after the StyledPaper and SectionTitle definitions
+const DebugInfo = styled(Box)(({ theme }) => ({
+  position: 'fixed',
+  top: 10,
+  right: 10,
+  backgroundColor: '#f5f5f5',
+  padding: theme.spacing(1),
+  borderRadius: theme.spacing(1),
+  fontSize: '12px',
+  maxWidth: '300px',
+  maxHeight: '200px',
+  overflow: 'auto',
+  zIndex: 1000,
+  border: '1px solid #ccc'
 }));
 
 // ProposalData interface is now imported from types/Campaign.ts
@@ -107,7 +122,154 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
 
   // Auth context
   const { user } = useAuth();
-  const [fieldUpdateInfo, setFieldUpdateInfo] = useState<{ [field: string]: { by: string, ts: number } }>({});
+  const [errorMessage, setErrorMessage] = useState<string>('');
+
+  // Enhanced proposal sync hook
+  const {
+    proposalData: enhancedProposalData,
+    loading: proposalLoading,
+    error: proposalError,
+    updateField,
+    restoreField,
+    getFieldValue,
+    isFieldEditing,
+    getFieldMetadata,
+    getSoftBlockWarning,
+    clearError
+  } = useProposalSync(campaignId || null, {
+    debounceMs: 1000,
+    softBlockThresholdMs: 5 * 60 * 1000 // 5 minutes
+  });
+
+  // In the main component function, right before the renderEnhancedField helper function
+  // Debug info component
+  const renderDebugInfo = () => {
+    if (!user || !campaignId) return null;
+    
+    return (
+      <DebugInfo>
+        <Typography variant="caption" sx={{ fontWeight: 'bold', display: 'block' }}>
+          Debug Info:
+        </Typography>
+        <Typography variant="caption" sx={{ display: 'block' }}>
+          User ID: {user.uid}
+        </Typography>
+        <Typography variant="caption" sx={{ display: 'block' }}>
+          Campaign ID: {campaignId}
+        </Typography>
+        <Typography variant="caption" sx={{ display: 'block' }}>
+          User Email: {user.email}
+        </Typography>
+        {currentCampaign && (
+          <>
+            <Typography variant="caption" sx={{ display: 'block', mt: 1, fontWeight: 'bold' }}>
+              Campaign Info:
+            </Typography>
+            <Typography variant="caption" sx={{ display: 'block' }}>
+              Name: {currentCampaign.name}
+            </Typography>
+            <Typography variant="caption" sx={{ display: 'block' }}>
+              Created By: {currentCampaign.createdBy}
+            </Typography>
+            <Typography variant="caption" sx={{ display: 'block' }}>
+              Collaborator IDs: {JSON.stringify(currentCampaign.collaboratorIds)}
+            </Typography>
+            <Typography variant="caption" sx={{ display: 'block' }}>
+              Is User in collaboratorIds: {currentCampaign.collaboratorIds?.includes(user.uid) ? 'YES' : 'NO'}
+            </Typography>
+            <Typography variant="caption" sx={{ display: 'block' }}>
+              User Role: {currentCampaign.collaborators?.[user.uid]?.role || 'NONE'}
+            </Typography>
+            {proposalError && (
+              <Typography variant="caption" sx={{ display: 'block', color: 'red', mt: 1 }}>
+                Error: {proposalError}
+              </Typography>
+            )}
+            {currentCampaign && !currentCampaign.collaboratorIds?.includes(user.uid) && (
+              <Button 
+                size="small" 
+                variant="contained" 
+                sx={{ mt: 1, fontSize: '10px' }}
+                onClick={async () => {
+                  try {
+                    const { updateCampaign } = await import('../utils/firestoreCampaignService');
+                    const newCollaboratorIds = Object.keys(currentCampaign.collaborators || {});
+                    if (!newCollaboratorIds.includes(user.uid)) {
+                      newCollaboratorIds.push(user.uid);
+                    }
+                    await updateCampaign(currentCampaign.id, {
+                      collaboratorIds: newCollaboratorIds
+                    }, user.uid);
+                    alert('Campaign permissions fixed! Please refresh the page.');
+                  } catch (error) {
+                    console.error('Failed to fix permissions:', error);
+                    alert('Failed to fix permissions: ' + (error instanceof Error ? error.message : 'Unknown error'));
+                  }
+                }}
+              >
+                Fix Permissions
+              </Button>
+            )}
+          </>
+        )}
+      </DebugInfo>
+    );
+  };
+
+  // Helper function to render enhanced fields
+  const renderEnhancedField = (
+    fieldName: keyof EnhancedProposalData,
+    label: string,
+    options: {
+      type?: 'input' | 'textarea' | 'select';
+      placeholder?: string;
+      rows?: number;
+      selectOptions?: string[];
+      disabled?: boolean;
+      helperText?: string;
+      InputLabelProps?: any;
+      onChange?: (value: string) => void;
+    } = {}
+  ) => {
+    const { 
+      type = 'input', 
+      placeholder, 
+      rows = 3, 
+      selectOptions = [], 
+      disabled = false,
+      helperText,
+      InputLabelProps,
+      onChange: customOnChange
+    } = options;
+    
+    const handleChange = (value: string) => {
+      updateField(fieldName, value);
+      if (customOnChange) {
+        customOnChange(value);
+      }
+    };
+    
+    return (
+      <EnhancedProposalField
+        fieldName={fieldName}
+        label={label}
+        value={getFieldValue(fieldName)}
+        placeholder={placeholder}
+        type={type}
+        options={selectOptions}
+        rows={rows}
+        isEditing={isFieldEditing(fieldName)}
+        metadata={getFieldMetadata(fieldName)}
+        softBlockWarning={getSoftBlockWarning(fieldName)}
+        onChange={handleChange}
+        onRestoreFromHistory={(historyIndex) => restoreField(fieldName, historyIndex)}
+        disabled={disabled}
+        fullWidth={true}
+        helperText={helperText}
+        InputLabelProps={InputLabelProps}
+      />
+    );
+  };
 
   // Campaign management functions
   const loadCampaign = async (campaignId: string) => {
@@ -136,22 +298,8 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
     };
   }, []);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const debouncedSave = useCallback(
-    debounce(async (campaign: Campaign, data: ProposalData) => {
-      if (campaign) {
-        setSaveStatus('saving');
-        try {
-          await saveCampaignData(campaign, data);
-          setSaveStatus('saved');
-        } catch (error) {
-          console.error('Error saving proposal data:', error);
-          setSaveStatus('error');
-        }
-      }
-    }, 2000),
-    [debounce, saveCampaignData, setSaveStatus]
-  );
+  // Note: debouncedSave is not used in enhanced proposal sync mode
+  // Enhanced proposal sync handles saving automatically through updateField
 
   const createNewCampaign = (name: string, description: string = '') => {
     const campaign = createCampaign(name, description);
@@ -284,60 +432,46 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
 
   // Update values when PowerAnalysis values change
   useEffect(() => {
-    if (powerAnalysisValues && currentCampaign) {
+    if (powerAnalysisValues && campaignId) {
       const effectiveMde = powerAnalysisValues.mde || '5';
       const effectivePower = powerAnalysisValues.power || '0.8';
       const effectiveSignificanceLevel = powerAnalysisValues.significanceLevel || '0.05';
       
-      setProposalData(prev => {
-        const newData = {
-          ...prev,
-          mde: effectiveMde,
-          power: effectivePower,
-          significanceLevel: effectiveSignificanceLevel,
-          primaryMetrics: powerAnalysisValues.selectedMetric || prev.primaryMetrics,
-          standardDeviation: calculatedVariance ? Math.sqrt(parseFloat(calculatedVariance)).toFixed(4) : prev.standardDeviation,
-          sampleSize: calculatedSampleSize || prev.sampleSize
-        };
-
-        // Auto-save the updated data
-        if (currentCampaign) {
-          debouncedSave(currentCampaign, newData);
-        }
-        return newData;
-      });
+      // Update enhanced proposal fields
+      updateField('mde', effectiveMde);
+      updateField('power', effectivePower);
+      updateField('significanceLevel', effectiveSignificanceLevel);
+      
+      if (powerAnalysisValues.selectedMetric) {
+        updateField('primaryMetrics', powerAnalysisValues.selectedMetric);
+      }
+      
+      if (calculatedVariance) {
+        updateField('standardDeviation', Math.sqrt(parseFloat(calculatedVariance)).toFixed(4));
+      }
+      
+      if (calculatedSampleSize) {
+        updateField('sampleSize', calculatedSampleSize);
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [powerAnalysisValues, calculatedSampleSize, calculatedVariance, currentCampaign]);
+  }, [powerAnalysisValues, calculatedSampleSize, calculatedVariance, campaignId]);
 
-  const handleChange = (field: keyof ProposalData) => (
-    event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement> | SelectChangeEvent
-  ) => {
-    const newValue = event.target.value;
-    handleFieldUpdate(field, newValue);
-  };
-
-  // Update handleFieldUpdate to use updateProposal
-  const handleFieldUpdate = (field: keyof ProposalData, newValue: string) => {
-    if (!field || typeof field !== 'string') {
-      return;
+  // Calculate expectedDays when usersPerDay and sampleSize are available
+  useEffect(() => {
+    const currentUsersPerDay = getFieldValue('usersPerDay');
+    const currentSampleSize = getFieldValue('sampleSize');
+    
+    if (currentUsersPerDay && currentSampleSize && campaignId) {
+      const usersPerDayNum = parseFloat(currentUsersPerDay);
+      const sampleSizeNum = parseFloat(currentSampleSize);
+      
+      if (!isNaN(usersPerDayNum) && !isNaN(sampleSizeNum) && usersPerDayNum > 0) {
+        const expectedDays = Math.ceil(sampleSizeNum / usersPerDayNum);
+        updateField('expectedDays', expectedDays.toString());
+      }
     }
-    setProposalData(prev => {
-      const newData = { ...prev, [field]: newValue };
-      if (field === 'usersPerDay' && newValue && prev.sampleSize) {
-        const usersPerDay = parseFloat(newValue);
-        const sampleSize = parseFloat(prev.sampleSize);
-        if (!isNaN(usersPerDay) && !isNaN(sampleSize) && usersPerDay > 0) {
-          newData.expectedDays = Math.ceil(sampleSize / usersPerDay).toString();
-        }
-      }
-      if (currentCampaign) {
-        // Use updateProposal to update both proposal and parent campaign's updatedAt
-        updateProposal(currentCampaign.id, { [field]: newData[field] });
-      }
-      return newData;
-    });
-  };
+  }, [getFieldValue, updateField, campaignId]);
 
   const handleExportConfirmation = () => {
     // Check for empty fields
@@ -623,13 +757,13 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
       importedFields.forEach(({ key }) => {
         if (proposalData[key as keyof ProposalData] !== data[key] && updatedBy !== user?.displayName) {
           setProposalData(prev => ({ ...prev, [key as keyof ProposalData]: data[key] }));
-          setFieldUpdateInfo(prev => ({ ...prev, [key]: { by: updatedBy, ts: Date.now() } }));
+          // setFieldUpdateInfo(prev => ({ ...prev, [key]: { by: updatedBy, ts: Date.now() } })); // Removed
           setTimeout(() => {
-            setFieldUpdateInfo(prev => {
-              const copy = { ...prev };
-              delete copy[key];
-              return copy;
-            });
+            // setFieldUpdateInfo(prev => { // Removed
+            //   const copy = { ...prev }; // Removed
+            //   delete copy[key]; // Removed
+            //   return copy; // Removed
+            // }); // Removed
           }, 6000);
         }
       });
@@ -658,13 +792,44 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
     };
   }, [currentCampaign]);
 
-  // In the render logic, skip rendering or show a message if proposalData is null
-  if (!proposalData) {
-    return <Box sx={{ p: 4, textAlign: 'center' }}><Typography>No proposal data found for this campaign.</Typography></Box>;
+  // Handle field update
+  // Note: handleFieldUpdate is not used in enhanced proposal sync mode
+  // Enhanced proposal sync handles field updates automatically through updateField
+
+  // Show loading state while enhanced proposal data is loading
+  if (proposalLoading) {
+    return (
+      <Box sx={{ p: 4, textAlign: 'center' }}>
+        <Typography>Loading proposal data...</Typography>
+        {process.env.NODE_ENV === 'development' && renderDebugInfo()}
+      </Box>
+    );
+  }
+
+  // Show error state if there's no data and not loading
+  if (!enhancedProposalData && !proposalLoading) {
+    return (
+      <Box sx={{ p: 4, textAlign: 'center' }}>
+        <Typography color="error">No proposal data found. Please try refreshing the page.</Typography>
+        {process.env.NODE_ENV === 'development' && renderDebugInfo()}
+      </Box>
+    );
   }
 
   return (
     <Box sx={{ maxWidth: '1200px', margin: 'auto', padding: 2 }}>
+      {/* Error Messages */}
+      {errorMessage && (
+        <Alert 
+          severity="error" 
+          onClose={() => setErrorMessage('')}
+          sx={{ mb: 2 }}
+        >
+          {errorMessage}
+        </Alert>
+      )}
+      {process.env.NODE_ENV === 'development' && renderDebugInfo()}
+      
       {/* Save Status Indicator */}
       <SaveStatusIndicator />
       
@@ -679,6 +844,17 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
           {notification}
         </Alert>
       ))}
+      
+      {/* Enhanced Proposal Error - Only show critical errors */}
+      {proposalError && !proposalError.includes('Missing or insufficient permissions') && !proposalError.includes('No proposal data found') && (
+        <Alert 
+          severity="error" 
+          sx={{ mb: 1 }}
+          onClose={clearError}
+        >
+          {proposalError}
+        </Alert>
+      )}
       
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
         <Typography variant="h4" gutterBottom sx={{ mb: 0 }}>
@@ -716,51 +892,42 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
         </Box>
       </Box>
 
-      {/* Campaign Management Section */}
+      {/* Campaign Management Section - only show when no campaignId is provided */}
+      {!campaignId && (
       <Card sx={{ mb: 3, bgcolor: 'background.paper' }}>
         <CardContent>
           <Grid container spacing={2} alignItems="center">
-            {/* Only show campaign dropdown if no campaignId is provided */}
-            {!campaignId && (
-              <Grid item xs={12} md={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Campaign</InputLabel>
-                  <Select
-                    value={currentCampaign?.id || ''}
-                    onChange={handleCampaignSelect}
-                    label="Campaign"
-                  >
-                    {availableCampaigns.map(campaign => (
-                      <MenuItem key={campaign.id} value={campaign.id}>
-                        <Box>
-                          <Typography variant="body1">{campaign.name}</Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {campaign.description}
-                          </Typography>
-                        </Box>
-                      </MenuItem>
-                    ))}
-                    <Divider />
-                    <MenuItem value="new">
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <AddIcon fontSize="small" />
-                        <Typography>Create New Campaign</Typography>
+            <Grid item xs={12} md={6}>
+              <FormControl fullWidth>
+                <InputLabel>Campaign</InputLabel>
+                <Select
+                  value={currentCampaign?.id || ''}
+                  onChange={handleCampaignSelect}
+                  label="Campaign"
+                >
+                  {availableCampaigns.map(campaign => (
+                    <MenuItem key={campaign.id} value={campaign.id}>
+                      <Box>
+                        <Typography variant="body1">{campaign.name}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {campaign.description}
+                        </Typography>
                       </Box>
                     </MenuItem>
-                  </Select>
-                </FormControl>
-              </Grid>
-            )}
-            
-            {/* Campaign info section - show campaign name prominently when campaignId is provided */}
-            <Grid item xs={12} md={campaignId ? 12 : 6}>
+                  ))}
+                  <Divider />
+                  <MenuItem value="new">
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <AddIcon fontSize="small" />
+                      <Typography>Create New Campaign</Typography>
+                    </Box>
+                  </MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} md={6}>
               {currentCampaign && (
                 <Box>
-                  {campaignId && (
-                    <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold' }}>
-                      Campaign: {currentCampaign.name}
-                    </Typography>
-                  )}
                   <Typography variant="body2" color="text.secondary">
                     <strong>Last modified:</strong> {currentCampaign.updatedAt ? formatRelativeTime(
                       currentCampaign.updatedAt instanceof Date 
@@ -769,7 +936,7 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
                     ) : 'Unknown'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    <strong>By:</strong> {currentCampaign.createdBy && currentCampaign.collaborators[currentCampaign.createdBy]?.user.displayName || 'Unknown'}
+                    <strong>By:</strong> {(currentCampaign.createdBy && currentCampaign.collaborators[currentCampaign.createdBy]?.user.displayName) || 'Unknown'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
                     <strong>Created:</strong> {currentCampaign.createdAt ? formatRelativeTime(
@@ -817,7 +984,6 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
                             }}
                           />
                         ))}
-                        // eslint-disable-next-line no-mixed-operators
                         {(activeUsers.length > 3 &&
                           (activeUsers.some(u => u.userId === user?.uid) ||
                             activeUsers.some(u => u.userId === currentCampaign?.createdBy))
@@ -837,37 +1003,38 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
           </Grid>
         </CardContent>
       </Card>
+      )}
+
+      {/* Campaign info display when campaignId is provided */}
+      {campaignId && currentCampaign && (
+        <Box sx={{ mb: 3, p: 2, bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+          <Typography variant="h6" sx={{ mb: 1, fontWeight: 'bold' }}>
+            Campaign: {currentCampaign.name}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {currentCampaign.description}
+          </Typography>
+        </Box>
+      )}
 
       <StyledPaper>
         <Grid container spacing={3}>
           <Grid item xs={12}>
-            <CollaborativeTextField
-              fieldName="title"
-              fullWidth
-              label="Experiment/Analysis Title"
-              value={proposalData.title}
-              onChange={(value) => handleFieldUpdate('title', value)}
-            />
+            {renderEnhancedField('title', 'Experiment/Analysis Title', {
+              placeholder: 'Enter a descriptive title for your experiment'
+            })}
           </Grid>
           <Grid item xs={12} md={6}>
-            <CollaborativeTextField
-              fieldName="architects"
-              fullWidth
-              label="Experiment Architects"
-              value={proposalData.architects}
-              onChange={(value) => handleFieldUpdate('architects', value)}
-            />
+            {renderEnhancedField('architects', 'Experiment Architects', {
+              placeholder: 'Names of people designing the experiment'
+            })}
           </Grid>
           <Grid item xs={12} md={6}>
-            <CollaborativeTextField
-              fieldName="date"
-              fullWidth
-              type="date"
-              label="Date"
-              value={proposalData.date}
-              onChange={(value) => handleFieldUpdate('date', value)}
-              InputLabelProps={{ shrink: true }}
-            />
+            {renderEnhancedField('date', 'Date', {
+              type: 'input',
+              placeholder: new Date().toISOString().split('T')[0],
+              InputLabelProps: { shrink: true }
+            })}
           </Grid>
         </Grid>
       </StyledPaper>
@@ -876,56 +1043,39 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
         <SectionTitle variant="h6">1. Business Context</SectionTitle>
         <Grid container spacing={3}>
           <Grid item xs={12}>
-            <CollaborativeTextField
-              fieldName="businessProblem"
-              fullWidth
-              multiline
-              rows={3}
-              label="Business Problem"
-              value={proposalData.businessProblem}
-              onChange={(value) => handleFieldUpdate('businessProblem', value)}
-            />
+            {renderEnhancedField('businessProblem', 'Business Problem', {
+              type: 'textarea',
+              rows: 3,
+              placeholder: 'Describe the business problem you are trying to solve'
+            })}
           </Grid>
           <Grid item xs={12}>
-            <CollaborativeTextField
-              fieldName="whyThisMatters"
-              fullWidth
-              multiline
-              rows={3}
-              label="Why This Matters"
-              value={proposalData.whyThisMatters}
-              onChange={(value) => handleFieldUpdate('whyThisMatters', value)}
-            />
+            {renderEnhancedField('whyThisMatters', 'Why This Matters', {
+              type: 'textarea',
+              rows: 3,
+              placeholder: 'Explain why solving this problem is important'
+            })}
           </Grid>
           <Grid item xs={12}>
-            <TextField
-              fullWidth
-              multiline
-              rows={2}
-              label="Quantify the Impact"
-              value={proposalData.quantifyImpact}
-              onChange={handleChange('quantifyImpact')}
-            />
+            {renderEnhancedField('quantifyImpact', 'Quantify the Impact', {
+              type: 'textarea',
+              rows: 2,
+              placeholder: 'How will you measure the impact of this experiment?'
+            })}
           </Grid>
           <Grid item xs={12}>
-            <TextField
-              fullWidth
-              multiline
-              rows={2}
-              label="Potential Benefit"
-              value={proposalData.potentialBenefit}
-              onChange={handleChange('potentialBenefit')}
-            />
+            {renderEnhancedField('potentialBenefit', 'Potential Benefit', {
+              type: 'textarea',
+              rows: 2,
+              placeholder: 'What are the expected benefits if the experiment succeeds?'
+            })}
           </Grid>
           <Grid item xs={12}>
-            <TextField
-              fullWidth
-              multiline
-              rows={3}
-              label="Previous Work/Findings"
-              value={proposalData.previousWork}
-              onChange={handleChange('previousWork')}
-            />
+            {renderEnhancedField('previousWork', 'Previous Work/Findings', {
+              type: 'textarea',
+              rows: 3,
+              placeholder: 'Any previous experiments or research related to this problem'
+            })}
           </Grid>
         </Grid>
       </StyledPaper>
@@ -934,37 +1084,25 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
         <SectionTitle variant="h6">2. Research Question and Hypotheses</SectionTitle>
         <Grid container spacing={3}>
           <Grid item xs={12}>
-            <CollaborativeTextField
-              fieldName="researchQuestion"
-              fullWidth
-              multiline
-              rows={2}
-              label="Research Question"
-              value={proposalData.researchQuestion}
-              onChange={(value) => handleFieldUpdate('researchQuestion', value)}
-            />
+            {renderEnhancedField('researchQuestion', 'Research Question', {
+              type: 'textarea',
+              rows: 2,
+              placeholder: 'What specific question are you trying to answer?'
+            })}
           </Grid>
           <Grid item xs={12}>
-            <CollaborativeTextField
-              fieldName="nullHypothesis"
-              fullWidth
-              multiline
-              rows={2}
-              label="Null Hypothesis (H0)"
-              value={proposalData.nullHypothesis}
-              onChange={(value) => handleFieldUpdate('nullHypothesis', value)}
-            />
+            {renderEnhancedField('nullHypothesis', 'Null Hypothesis (H0)', {
+              type: 'textarea',
+              rows: 2,
+              placeholder: 'State your null hypothesis (e.g., "There is no difference between treatments")'
+            })}
           </Grid>
           <Grid item xs={12}>
-            <CollaborativeTextField
-              fieldName="alternativeHypothesis"
-              fullWidth
-              multiline
-              rows={2}
-              label="Alternative Hypothesis (H1)"
-              value={proposalData.alternativeHypothesis}
-              onChange={(value) => handleFieldUpdate('alternativeHypothesis', value)}
-            />
+            {renderEnhancedField('alternativeHypothesis', 'Alternative Hypothesis (H1)', {
+              type: 'textarea',
+              rows: 2,
+              placeholder: 'State your alternative hypothesis (e.g., "Treatment A performs better than Treatment B")'
+            })}
           </Grid>
         </Grid>
       </StyledPaper>
@@ -973,48 +1111,32 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
         <SectionTitle variant="h6">3. Study Design</SectionTitle>
         <Grid container spacing={3}>
           <Grid item xs={12}>
-            <FormControl fullWidth>
-              <InputLabel>Type of Study</InputLabel>
-              <Select
-                value={proposalData.studyType}
-                onChange={handleChange('studyType')}
-                label="Type of Study"
-              >
-                <MenuItem value="A/B Test">A/B Test</MenuItem>
-                <MenuItem value="MAB">Multi-Armed Bandit (MAB)</MenuItem>
-                <MenuItem value="Factorial">Factorial Test</MenuItem>
-              </Select>
-            </FormControl>
+            {renderEnhancedField('studyType', 'Type of Study', {
+              type: 'select',
+              selectOptions: ['A/B Test', 'Multi-Armed Bandit (MAB)', 'Factorial Test'],
+              placeholder: 'Select the type of study'
+            })}
           </Grid>
           <Grid item xs={12}>
-            <TextField
-              fullWidth
-              multiline
-              rows={2}
-              label="Target Population"
-              value={proposalData.targetPopulation}
-              onChange={handleChange('targetPopulation')}
-            />
+            {renderEnhancedField('targetPopulation', 'Target Population', {
+              type: 'textarea',
+              rows: 2,
+              placeholder: 'Describe the target population for your experiment'
+            })}
           </Grid>
           <Grid item xs={12}>
-            <TextField
-              fullWidth
-              multiline
-              rows={2}
-              label="Sampling Strategy"
-              value={proposalData.samplingStrategy}
-              onChange={handleChange('samplingStrategy')}
-            />
+            {renderEnhancedField('samplingStrategy', 'Sampling Strategy', {
+              type: 'textarea',
+              rows: 2,
+              placeholder: 'How will you sample users for the experiment?'
+            })}
           </Grid>
           <Grid item xs={12}>
-            <TextField
-              fullWidth
-              multiline
-              rows={3}
-              label="Exploratory Data Analysis (EDA)"
-              value={proposalData.eda}
-              onChange={handleChange('eda')}
-            />
+            {renderEnhancedField('eda', 'Exploratory Data Analysis (EDA)', {
+              type: 'textarea',
+              rows: 3,
+              placeholder: 'Describe your plan for exploratory data analysis'
+            })}
           </Grid>
         </Grid>
       </StyledPaper>
@@ -1023,128 +1145,71 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
         <SectionTitle variant="h6">4. Sample Size and Power Analysis</SectionTitle>
         <Grid container spacing={3}>
           <Grid item xs={12} md={6}>
-            <Box sx={{ position: 'relative' }}>
-              <TextField
-                fullWidth
-                label="Minimum Detectable Effect (MDE)"
-                value={proposalData.mde + '%'}
-                onChange={handleChange('mde')}
-                helperText={powerAnalysisValues?.mde 
+            {renderEnhancedField('mde', 'Minimum Detectable Effect (MDE)', {
+              helperText: powerAnalysisValues?.mde 
                   ? `Value from Power Analysis: ${powerAnalysisValues.mde}${powerAnalysisValues?.mdeType === 'percentage' ? '%' : ''}`
-                  : "Default: 5%"}
-                sx={fieldUpdateInfo.mde ? { backgroundColor: '#fffde7', transition: 'background 0.5s' } : {}}
-              />
-              {fieldUpdateInfo.mde && (
-                <Typography variant="caption" sx={{ color: '#bfa100', fontStyle: 'italic', position: 'absolute', left: 0, top: '100%' }}>
-                  Updated by {fieldUpdateInfo.mde.by}
-                </Typography>
-              )}
-            </Box>
+                : "Run Power Analysis to set this value",
+              disabled: !powerAnalysisValues?.mde
+            })}
           </Grid>
           <Grid item xs={12} md={6}>
-            <Box sx={{ position: 'relative' }}>
-              <TextField
-                fullWidth
-                label="Statistical Power"
-                value={proposalData.power}
-                onChange={handleChange('power')}
-                helperText={powerAnalysisValues?.power 
+            {renderEnhancedField('power', 'Statistical Power', {
+              helperText: powerAnalysisValues?.power 
                   ? `Value from Power Analysis: ${powerAnalysisValues.power}`
-                  : "Default: 0.8 (80%)"}
-                sx={fieldUpdateInfo.power ? { backgroundColor: '#fffde7', transition: 'background 0.5s' } : {}}
-              />
-              {fieldUpdateInfo.power && (
-                <Typography variant="caption" sx={{ color: '#bfa100', fontStyle: 'italic', position: 'absolute', left: 0, top: '100%' }}>
-                  Updated by {fieldUpdateInfo.power.by}
-                </Typography>
-              )}
-            </Box>
+                : "Run Power Analysis to set this value",
+              disabled: !powerAnalysisValues?.power
+            })}
           </Grid>
           <Grid item xs={12} md={6}>
-            <Box sx={{ position: 'relative' }}>
-              <TextField
-                fullWidth
-                label="Significance Level (α)"
-                value={proposalData.significanceLevel}
-                onChange={handleChange('significanceLevel')}
-                helperText={powerAnalysisValues?.significanceLevel 
+            {renderEnhancedField('significanceLevel', 'Significance Level (α)', {
+              helperText: powerAnalysisValues?.significanceLevel 
                   ? `Value from Power Analysis: ${powerAnalysisValues.significanceLevel}`
-                  : "Default: 0.05 (5%)"}
-                sx={fieldUpdateInfo.significanceLevel ? { backgroundColor: '#fffde7', transition: 'background 0.5s' } : {}}
-              />
-              {fieldUpdateInfo.significanceLevel && (
-                <Typography variant="caption" sx={{ color: '#bfa100', fontStyle: 'italic', position: 'absolute', left: 0, top: '100%' }}>
-                  Updated by {fieldUpdateInfo.significanceLevel.by}
-                </Typography>
-              )}
-            </Box>
+                : "Run Power Analysis to set this value",
+              disabled: !powerAnalysisValues?.significanceLevel
+            })}
           </Grid>
           <Grid item xs={12} md={6}>
-            <Box sx={{ position: 'relative' }}>
-              <TextField
-                fullWidth
-                label="Standard Deviation"
-                value={proposalData.standardDeviation}
-                onChange={handleChange('standardDeviation')}
-                helperText={calculatedVariance
+            {renderEnhancedField('standardDeviation', 'Standard Deviation', {
+              helperText: calculatedVariance
                   ? `Value from Power Analysis: ${Math.sqrt(parseFloat(calculatedVariance)).toFixed(4)}`
-                  : "Run Power Analysis to calculate"}
-                disabled // Make the field read-only
-                sx={fieldUpdateInfo.standardDeviation ? { backgroundColor: '#fffde7', transition: 'background 0.5s' } : {}}
-              />
-              {fieldUpdateInfo.standardDeviation && (
-                <Typography variant="caption" sx={{ color: '#bfa100', fontStyle: 'italic', position: 'absolute', left: 0, top: '100%' }}>
-                  Updated by {fieldUpdateInfo.standardDeviation.by}
-                </Typography>
-              )}
-            </Box>
+                : "Run Power Analysis to calculate",
+              disabled: true
+            })}
           </Grid>
           <Grid item xs={12} md={6}>
-            <Box sx={{ position: 'relative' }}>
-              <TextField
-                fullWidth
-                label="Total Required Sample Size"
-                value={proposalData.sampleSize}
-                onChange={handleChange('sampleSize')}
-                helperText={calculatedSampleSize 
+            {renderEnhancedField('sampleSize', 'Total Required Sample Size', {
+              helperText: calculatedSampleSize 
                   ? `Value from Power Analysis: ${calculatedSampleSize}`
-                  : "Run Power Analysis to calculate"}
-                disabled // Make the field read-only
-                sx={fieldUpdateInfo.sampleSize ? { backgroundColor: '#fffde7', transition: 'background 0.5s' } : {}}
-              />
-              {fieldUpdateInfo.sampleSize && (
-                <Typography variant="caption" sx={{ color: '#bfa100', fontStyle: 'italic', position: 'absolute', left: 0, top: '100%' }}>
-                  Updated by {fieldUpdateInfo.sampleSize.by}
-                </Typography>
-              )}
-            </Box>
+                : "Run Power Analysis to calculate",
+              disabled: true
+            })}
           </Grid>
           <Grid item xs={12} md={6}>
-            <CollaborativeTextField
-              fieldName="usersPerDay"
-              fullWidth
-              label="Users Per Day"
-              value={proposalData.usersPerDay}
-              onChange={(value) => handleFieldUpdate('usersPerDay', value)}
-              placeholder="e.g., 1200"
-              type="number"
-              helperText="Enter the average number of users per day"
-            />
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <TextField
-              fullWidth
-              label="Expected Days to Reach Sample Size"
-              value={proposalData.expectedDays}
-              InputProps={{
-                readOnly: true,
-              }}
-              helperText={
-                proposalData.usersPerDay && proposalData.sampleSize
-                  ? `With ${proposalData.usersPerDay} users per day and a sample size of ${proposalData.sampleSize}, we expect to reach the required sample size in ${proposalData.expectedDays} days.`
-                  : "Will be calculated based on Users Per Day and Sample Size"
+            {renderEnhancedField('usersPerDay', 'Users Per Day', {
+              placeholder: 'e.g., 1200',
+              helperText: 'Enter the average number of users per day',
+              onChange: (value) => {
+                // Trigger expectedDays recalculation when usersPerDay changes
+                const currentSampleSize = getFieldValue('sampleSize');
+                if (value && currentSampleSize) {
+                  const usersPerDayNum = parseFloat(value);
+                  const sampleSizeNum = parseFloat(currentSampleSize);
+                  
+                  if (!isNaN(usersPerDayNum) && !isNaN(sampleSizeNum) && usersPerDayNum > 0) {
+                    const expectedDays = Math.ceil(sampleSizeNum / usersPerDayNum);
+                    setTimeout(() => updateField('expectedDays', expectedDays.toString()), 100);
+                  }
+                }
               }
-            />
+            })}
+          </Grid>
+          <Grid item xs={12} md={6}>
+            {renderEnhancedField('expectedDays', 'Expected Days to Reach Sample Size', {
+              helperText: getFieldValue('usersPerDay') && getFieldValue('sampleSize')
+                ? `With ${getFieldValue('usersPerDay')} users per day and a sample size of ${getFieldValue('sampleSize')}, we expect to reach the required sample size in ${getFieldValue('expectedDays')} days.`
+                : "Will be calculated based on Users Per Day and Sample Size",
+              disabled: true
+            })}
           </Grid>
         </Grid>
       </StyledPaper>
@@ -1153,64 +1218,46 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
         <SectionTitle variant="h6">5. Statistical Analysis Plan</SectionTitle>
         <Grid container spacing={3}>
           <Grid item xs={12}>
-            <TextField
-              fullWidth
-              multiline
-              rows={2}
-              label="Primary Metric(s)"
-              value={proposalData.primaryMetrics}
-              onChange={handleChange('primaryMetrics')}
-            />
+            {renderEnhancedField('primaryMetrics', 'Primary Metric(s)', {
+              type: 'textarea',
+              rows: 2,
+              placeholder: 'List the primary metrics you will analyze (e.g., conversion rate, revenue per user)'
+            })}
           </Grid>
           <Grid item xs={12}>
-            <TextField
-              fullWidth
-              multiline
-              rows={2}
-              label="Secondary Metric(s)"
-              value={proposalData.secondaryMetrics}
-              onChange={handleChange('secondaryMetrics')}
-            />
+            {renderEnhancedField('secondaryMetrics', 'Secondary Metric(s)', {
+              type: 'textarea',
+              rows: 2,
+              placeholder: 'List secondary metrics that provide additional insights'
+            })}
           </Grid>
           <Grid item xs={12}>
-            <TextField
-              fullWidth
-              multiline
-              rows={2}
-              label="Guardrail Metric(s)"
-              value={proposalData.guardrailMetrics}
-              onChange={handleChange('guardrailMetrics')}
-            />
+            {renderEnhancedField('guardrailMetrics', 'Guardrail Metric(s)', {
+              type: 'textarea',
+              rows: 2,
+              placeholder: 'Metrics to ensure the experiment does not harm the user experience'
+            })}
           </Grid>
           <Grid item xs={12}>
-            <TextField
-              fullWidth
-              multiline
-              rows={3}
-              label="Sanity Check Metric(s)"
-              value={proposalData.sanityChecks}
-              onChange={handleChange('sanityChecks')}
-            />
+            {renderEnhancedField('sanityChecks', 'Sanity Check Metric(s)', {
+              type: 'textarea',
+              rows: 3,
+              placeholder: 'Metrics to validate that the experiment is running correctly'
+            })}
           </Grid>
           <Grid item xs={12}>
-            <TextField
-              fullWidth
-              multiline
-              rows={2}
-              label="Statistical Test(s)"
-              value={proposalData.statisticalTests}
-              onChange={handleChange('statisticalTests')}
-            />
+            {renderEnhancedField('statisticalTests', 'Statistical Test(s)', {
+              type: 'textarea',
+              rows: 2,
+              placeholder: 'Which statistical tests will you use? (e.g., t-test, chi-square, Mann-Whitney U)'
+            })}
           </Grid>
           <Grid item xs={12}>
-            <TextField
-              fullWidth
-              multiline
-              rows={3}
-              label="Potential Risks"
-              value={proposalData.potentialRisks}
-              onChange={handleChange('potentialRisks')}
-            />
+            {renderEnhancedField('potentialRisks', 'Potential Risks', {
+              type: 'textarea',
+              rows: 3,
+              placeholder: 'What are the potential risks of this experiment and how will you mitigate them?'
+            })}
           </Grid>
         </Grid>
       </StyledPaper>
@@ -1219,28 +1266,31 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
         <SectionTitle variant="h6">6. Segmentation and Multiple Comparisons</SectionTitle>
         <Grid container spacing={3}>
           <Grid item xs={12}>
-            <TextField
-              fullWidth
-              multiline
-              rows={3}
-              label="Potential Segments"
-              value={proposalData.segments}
-              onChange={handleChange('segments')}
-            />
+            {renderEnhancedField('segments', 'Potential Segments', {
+              type: 'textarea',
+              rows: 3,
+              placeholder: 'Describe any user segments you plan to analyze separately (e.g., new vs. returning users, mobile vs. desktop)'
+            })}
           </Grid>
           <Grid item xs={12}>
-            <FormControl fullWidth>
-              <InputLabel>FWER Correction Method</InputLabel>
-              <Select
-                value={proposalData.fwerCorrection}
-                onChange={handleChange('fwerCorrection')}
-                label="FWER Correction Method"
-              >
-                <MenuItem value="Bonferroni Correction">Bonferroni Correction</MenuItem>
-                <MenuItem value="FDR">False Discovery Rate (FDR)</MenuItem>
-                <MenuItem value="None">None</MenuItem>
-              </Select>
-            </FormControl>
+            {renderEnhancedField('fwerCorrection', 'FWER Correction Method', {
+              type: 'select',
+              selectOptions: ['Bonferroni Correction', 'False Discovery Rate (FDR)', 'None'],
+              placeholder: 'Select the multiple comparison correction method'
+            })}
+          </Grid>
+        </Grid>
+      </StyledPaper>
+      
+      <StyledPaper>
+        <SectionTitle variant="h6">7. Additional Comments</SectionTitle>
+        <Grid container spacing={3}>
+          <Grid item xs={12}>
+            {renderEnhancedField('comments', 'Comments', {
+              type: 'textarea',
+              rows: 4,
+              placeholder: 'Any additional comments, considerations, or notes about the experiment'
+            })}
           </Grid>
         </Grid>
       </StyledPaper>

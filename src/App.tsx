@@ -40,7 +40,6 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import InfoIcon from '@mui/icons-material/Info';
 import PowerAnalysis from './components/PowerAnalysis';
 import HypothesisTestingProposal from './components/HypothesisTestingProposal';
-import BroadcastTest from './components/BroadcastTest';
 import LoginScreen from './components/LoginScreen';
 import ProfileDropdown from './components/ProfileDropdown';
 import CampaignManager from './components/CampaignManager';
@@ -1075,6 +1074,14 @@ function AuthenticatedApp() {
     if (!csvData || !file || !user) return;
 
     try {
+      // Generate content hash for the CSV
+      const csvContent = await file.text();
+      const encoder = new TextEncoder();
+      const data = encoder.encode(csvContent);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const contentHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
       const csvAnalysis: CSVAnalysis = {
         rowCount: csvData.rowCount,
         columnCount: csvData.columnCount,
@@ -1085,7 +1092,9 @@ function AuthenticatedApp() {
         dependentMetrics: csvData.dependentMetrics,
         fileName: file.name,
         fileSize: file.size,
-        uploadedAt: new Date()
+        uploadedAt: new Date(),
+        contentHash: contentHash,
+        uploadedBy: user.uid
       };
 
       if (currentCampaign) {
@@ -1480,9 +1489,9 @@ function AuthenticatedApp() {
                 No significant dependencies found between columns. This could mean:
               </Typography>
               <Box component="ul" sx={{ color: 'text.secondary', mt: 1 }}>
-                <li>The columns are mostly independent</li>
-                <li>The relationships are weaker than our thresholds (correlation {'>'}0.5 or association {'>'}0.3)</li>
-                <li>There is insufficient data to determine relationships</li>
+                  <li>The columns are mostly independent</li>
+                  <li>The relationships are weaker than our thresholds (correlation {'>'}0.5 or association {'>'}0.3)</li>
+                  <li>There is insufficient data to determine relationships</li>
               </Box>
             </Paper>
           ) : (
@@ -1600,23 +1609,23 @@ function AuthenticatedApp() {
               <Box sx={{ pl: 2 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <Typography>Completeness:</Typography>
-                  <LinearProgress 
-                    variant="determinate" 
-                    value={stats.completeness} 
-                    sx={{ 
-                      width: 100,
-                      height: 8,
-                      borderRadius: 4,
-                      backgroundColor: '#e0e0e0',
-                      '& .MuiLinearProgress-bar': {
-                        backgroundColor: stats.completeness > 90 ? '#2e7d32' : stats.completeness > 70 ? '#ed6c02' : '#d32f2f'
-                      }
-                    }}
-                  />
-                  <Typography variant="body2">
-                    {stats.completeness.toFixed(1)}%
-                  </Typography>
-                </Box>
+                    <LinearProgress 
+                      variant="determinate" 
+                      value={stats.completeness} 
+                      sx={{ 
+                        width: 100,
+                        height: 8,
+                        borderRadius: 4,
+                        backgroundColor: '#e0e0e0',
+                        '& .MuiLinearProgress-bar': {
+                          backgroundColor: stats.completeness > 90 ? '#2e7d32' : stats.completeness > 70 ? '#ed6c02' : '#d32f2f'
+                        }
+                      }}
+                    />
+                    <Typography variant="body2">
+                      {stats.completeness.toFixed(1)}%
+                    </Typography>
+                  </Box>
                 <Typography>Missing Values: {stats.missingCount}</Typography>
                 <Typography>Null Values: {stats.nullCount}</Typography>
               </Box>
@@ -1628,7 +1637,7 @@ function AuthenticatedApp() {
                   <>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, mb: 0.5 }}>
                       <Typography variant="subtitle2" sx={{ color: 'primary.main' }}>
-                        Central Tendency:
+                      Central Tendency:
                       </Typography>
                       <Tooltip title="These tell you what's 'typical' or 'normal' in your data - like finding the center point of all your values.">
                         <IconButton size="small">
@@ -1638,8 +1647,8 @@ function AuthenticatedApp() {
                     </Box>
                     <Box sx={{ pl: 2, mb: 2 }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography>
-                          Mean: <strong>{stats.mean?.toFixed(2)}</strong>
+                      <Typography>
+                        Mean: <strong>{stats.mean?.toFixed(2)}</strong>
                         </Typography>
                         <Tooltip title="The average - add up all values and divide by how many you have. Can be affected by very high or low values.">
                           <IconButton size="small">
@@ -1648,30 +1657,30 @@ function AuthenticatedApp() {
                         </Tooltip>
                       </Box>
                                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <Typography>
-                            Median: <strong>{stats.median?.toFixed(2)}</strong>
+                      <Typography>
+                        Median: <strong>{stats.median?.toFixed(2)}</strong>
                           </Typography>
-                          <Tooltip title="The middle value when you sort all values from lowest to highest. Less affected by extreme values than the mean.">
-                            <IconButton size="small">
-                              <InfoIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
+                        <Tooltip title="The middle value when you sort all values from lowest to highest. Less affected by extreme values than the mean.">
+                          <IconButton size="small">
+                            <InfoIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                         </Box>
                                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <Typography>
-                            Mode: <strong>{stats.mode}</strong>
+                      <Typography>
+                        Mode: <strong>{stats.mode}</strong>
                           </Typography>
-                          <Tooltip title="The most common value that appears most frequently in your data.">
-                            <IconButton size="small">
-                              <InfoIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
+                        <Tooltip title="The most common value that appears most frequently in your data.">
+                          <IconButton size="small">
+                            <InfoIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                         </Box>
                     </Box>
                     
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, mb: 0.5 }}>
                       <Typography variant="subtitle2" sx={{ color: 'primary.main' }}>
-                        Range & Percentiles:
+                      Range & Percentiles:
                       </Typography>
                       <Tooltip title="Shows the spread of your data - from the smallest to largest values, and key points in between.">
                         <IconButton size="small">
@@ -1681,8 +1690,8 @@ function AuthenticatedApp() {
                     </Box>
                     <Box sx={{ pl: 2, mb: 2 }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography>
-                          Minimum: <strong>{stats.min?.toFixed(2)}</strong>
+                      <Typography>
+                        Minimum: <strong>{stats.min?.toFixed(2)}</strong>
                         </Typography>
                         <Tooltip title="The smallest value in your data.">
                           <IconButton size="small">
@@ -1691,8 +1700,8 @@ function AuthenticatedApp() {
                         </Tooltip>
                       </Box>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography>
-                          Maximum: <strong>{stats.max?.toFixed(2)}</strong>
+                      <Typography>
+                        Maximum: <strong>{stats.max?.toFixed(2)}</strong>
                         </Typography>
                         <Tooltip title="The largest value in your data.">
                           <IconButton size="small">
@@ -1701,8 +1710,8 @@ function AuthenticatedApp() {
                         </Tooltip>
                       </Box>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography>
-                          25th Percentile (Q1): <strong>{stats.percentile25?.toFixed(2)}</strong>
+                      <Typography>
+                        25th Percentile (Q1): <strong>{stats.percentile25?.toFixed(2)}</strong>
                         </Typography>
                         <Tooltip title="25% of your data falls below this value. It's like saying 'most values are above this point.'">
                           <IconButton size="small">
@@ -1711,8 +1720,8 @@ function AuthenticatedApp() {
                         </Tooltip>
                       </Box>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Typography>
-                          75th Percentile (Q3): <strong>{stats.percentile75?.toFixed(2)}</strong>
+                      <Typography>
+                        75th Percentile (Q3): <strong>{stats.percentile75?.toFixed(2)}</strong>
                         </Typography>
                         <Tooltip title="75% of your data falls below this value. It's like saying 'most values are below this point.'">
                           <IconButton size="small">
@@ -1724,7 +1733,7 @@ function AuthenticatedApp() {
                     
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, mb: 0.5 }}>
                       <Typography variant="subtitle2" sx={{ color: 'primary.main' }}>
-                        Distribution Shape:
+                      Distribution Shape:
                       </Typography>
                       <Tooltip title="These describe how your data is spread out and shaped - like whether it's evenly distributed or bunched up in certain areas.">
                         <IconButton size="small">
@@ -2445,7 +2454,6 @@ function AuthenticatedApp() {
               <Tab label="Correlations" />
               <Tab label="Power Analysis" />
                 <Tab label="Hypothesis Testing Proposal" />
-                <Tab label="Broadcast Test" />
             </Tabs>
           </Box>
 
@@ -2470,7 +2478,6 @@ function AuthenticatedApp() {
               calculatedVariance={calculatedVariance}
               powerAnalysisValues={powerAnalysisValues}
             />}
-            {activeTab === 6 && <BroadcastTest />}
           </Box>
       )}
     </Container>
