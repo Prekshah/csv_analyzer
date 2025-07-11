@@ -13,9 +13,34 @@ import {
   serverTimestamp,
   Unsubscribe
 } from 'firebase/firestore';
-import { Campaign } from '../types/Campaign';
+import { Campaign, User } from '../types/Campaign';
 
 export const CAMPAIGNS_COLLECTION = 'campaigns';
+
+// Utility function to touch a campaign (update its updatedAt and updatedBy fields)
+export const touchCampaign = async (campaignId: string, user: User): Promise<void> => {
+  const campaignRef = doc(db, CAMPAIGNS_COLLECTION, campaignId);
+  await updateDoc(campaignRef, {
+    updatedAt: serverTimestamp(),
+    updatedBy: {
+      uid: user.uid,
+      displayName: user.displayName,
+      email: user.email
+    }
+  });
+  console.log(`[touchCampaign] Updated campaign ${campaignId} by ${user.displayName}`);
+};
+
+// Convenience function to touch campaign with error handling
+export const touchCampaignSafe = async (campaignId: string, user: User | null): Promise<void> => {
+  if (!campaignId || !user) return;
+  
+  try {
+    await touchCampaign(campaignId, user);
+  } catch (error) {
+    console.error(`[touchCampaignSafe] Failed to touch campaign ${campaignId}:`, error);
+  }
+};
 
 export const createCampaign = async (campaign: Omit<Campaign, 'id' | 'createdAt' | 'updatedAt'>, userId: string): Promise<string> => {
   console.log('[DEBUG][firestoreCampaignService] createCampaign called with:', { campaign, userId });
@@ -58,7 +83,7 @@ export const getCampaign = async (id: string): Promise<Campaign | null> => {
   return null;
 };
 
-export const updateCampaign = async (id: string, updates: Partial<Campaign>, userId: string): Promise<void> => {
+export const updateCampaign = async (id: string, updates: Partial<Campaign>, userOrUserId: User | string): Promise<void> => {
   const docRef = doc(db, CAMPAIGNS_COLLECTION, id);
   let collaborators = updates.collaborators;
   let collaboratorIds;
@@ -66,11 +91,26 @@ export const updateCampaign = async (id: string, updates: Partial<Campaign>, use
     collaboratorIds = Object.keys(collaborators);
     console.log('[firestoreCampaignService] updateCampaign syncing collaborators and collaboratorIds:', collaborators, collaboratorIds);
   }
+
+  // Handle both User object and userId string
+  let updatedByField;
+  if (typeof userOrUserId === 'string') {
+    // Legacy support: just use the userId
+    updatedByField = userOrUserId;
+  } else {
+    // New format: use User object with full details
+    updatedByField = {
+      uid: userOrUserId.uid,
+      displayName: userOrUserId.displayName,
+      email: userOrUserId.email
+    };
+  }
+
   await updateDoc(docRef, {
     ...updates,
     ...(collaboratorIds ? { collaboratorIds, collaborators } : {}),
     updatedAt: serverTimestamp(),
-    updatedBy: userId,
+    updatedBy: updatedByField,
   });
 };
 

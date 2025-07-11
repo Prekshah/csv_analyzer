@@ -1,10 +1,8 @@
 import { 
   TabState, 
-  CampaignCSVState, 
-  CSVFileVersion 
+  CampaignCSVState
 } from '../types/Campaign';
 import { 
-  createDefaultTabState, 
   createDefaultCampaignCSVState, 
   updateTabState, 
   updatePowerAnalysisState 
@@ -20,36 +18,36 @@ export interface TabStateManager {
   getCampaignState(campaignId: string): Record<string, CampaignCSVState>;
   setCampaignState(campaignId: string, state: Record<string, CampaignCSVState>): void;
   
-  // CSV-specific state management
-  getCSVState(campaignId: string, csvVersionId: string): CampaignCSVState | null;
-  setCSVState(campaignId: string, csvVersionId: string, state: CampaignCSVState): void;
+  // CSV-specific state management (using content hash for precise matching)
+  getCSVState(campaignId: string, csvContentHash: string): CampaignCSVState | null;
+  setCSVState(campaignId: string, csvContentHash: string, state: CampaignCSVState): void;
   
   // Tab state management
-  getTabState(campaignId: string, csvVersionId: string): TabState | null;
-  setTabState(campaignId: string, csvVersionId: string, tabState: TabState): void;
+  getTabState(campaignId: string, csvContentHash: string): TabState | null;
+  setTabState(campaignId: string, csvContentHash: string, tabState: TabState): void;
   
   // Active tab management
-  getActiveTab(campaignId: string, csvVersionId: string): number;
-  setActiveTab(campaignId: string, csvVersionId: string, tabIndex: number, updatedBy: string): void;
+  getActiveTab(campaignId: string, csvContentHash: string): number;
+  setActiveTab(campaignId: string, csvContentHash: string, tabIndex: number, updatedBy: string): void;
   
   // Power analysis state management
-  getPowerAnalysisState(campaignId: string, csvVersionId: string): TabState['powerAnalysisState'] | null;
+  getPowerAnalysisState(campaignId: string, csvContentHash: string): TabState['powerAnalysisState'] | null;
   setPowerAnalysisState(
     campaignId: string, 
-    csvVersionId: string, 
+    csvContentHash: string, 
     powerAnalysisState: Partial<TabState['powerAnalysisState']>, 
     updatedBy: string
   ): void;
   
   // Utility methods
-  initializeCSVState(campaignId: string, csvVersionId: string, uploadedBy: string): CampaignCSVState;
+  initializeCSVState(campaignId: string, csvContentHash: string, csvVersionId: string, uploadedBy: string): CampaignCSVState;
   clearCampaignState(campaignId: string): void;
-  clearCSVState(campaignId: string, csvVersionId: string): void;
+  clearCSVState(campaignId: string, csvContentHash: string): void;
   
   // Collaboration support
   subscribeToStateChanges(
     campaignId: string, 
-    csvVersionId: string, 
+    csvContentHash: string, 
     callback: (state: CampaignCSVState) => void
   ): () => void;
   
@@ -67,9 +65,14 @@ class TabStateManagerImpl implements TabStateManager {
     return `${CAMPAIGN_STATE_PREFIX}${campaignId}`;
   }
   
-  // Generate key for specific CSV state
-  private getCSVStateKey(campaignId: string, csvVersionId: string): string {
-    return `${TAB_STATE_PREFIX}${campaignId}_${csvVersionId}`;
+  // Generate key for specific CSV state using composite key with content hash
+  private getCSVStateKey(campaignId: string, csvContentHash: string): string {
+    return `${TAB_STATE_PREFIX}${campaignId}::${csvContentHash}`;
+  }
+  
+  // Generate composite key for direct CSV state access
+  private getCompositeKey(campaignId: string, csvContentHash: string): string {
+    return `${campaignId}::${csvContentHash}`;
   }
   
   // Get campaign state from localStorage
@@ -88,116 +91,136 @@ class TabStateManagerImpl implements TabStateManager {
     return {};
   }
   
-  // Set campaign state in localStorage
+  // Set campaign state in localStorage (legacy method - mainly for backward compatibility)
   setCampaignState(campaignId: string, state: Record<string, CampaignCSVState>): void {
     try {
       const key = this.getCampaignStateKey(campaignId);
       const serialized = this.serializeStates(state);
       localStorage.setItem(key, JSON.stringify(serialized));
-      
-      // Notify listeners
-      this.notifyStateChange(campaignId, state);
     } catch (error) {
       console.error('Error saving campaign state:', error);
     }
   }
   
-  // Get CSV-specific state
-  getCSVState(campaignId: string, csvVersionId: string): CampaignCSVState | null {
-    const campaignState = this.getCampaignState(campaignId);
-    return campaignState[csvVersionId] || null;
+  // Get CSV-specific state using content hash
+  getCSVState(campaignId: string, csvContentHash: string): CampaignCSVState | null {
+    try {
+      const key = this.getCSVStateKey(campaignId, csvContentHash);
+      const stored = localStorage.getItem(key);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return this.deserializeSingleState(parsed);
+      }
+    } catch (error) {
+      console.error('Error loading CSV state:', error);
+    }
+    return null;
   }
   
-  // Set CSV-specific state
-  setCSVState(campaignId: string, csvVersionId: string, state: CampaignCSVState): void {
-    const campaignState = this.getCampaignState(campaignId);
-    campaignState[csvVersionId] = state;
-    this.setCampaignState(campaignId, campaignState);
+  // Set CSV-specific state using content hash
+  setCSVState(campaignId: string, csvContentHash: string, state: CampaignCSVState): void {
+    try {
+      const key = this.getCSVStateKey(campaignId, csvContentHash);
+      const serialized = this.serializeSingleState(state);
+      localStorage.setItem(key, JSON.stringify(serialized));
+    } catch (error) {
+      console.error('Error saving CSV state:', error);
+    }
   }
   
-  // Get tab state for specific CSV
-  getTabState(campaignId: string, csvVersionId: string): TabState | null {
-    const csvState = this.getCSVState(campaignId, csvVersionId);
+  // Get tab state for specific CSV using content hash
+  getTabState(campaignId: string, csvContentHash: string): TabState | null {
+    const csvState = this.getCSVState(campaignId, csvContentHash);
     return csvState?.tabStates || null;
   }
   
-  // Set tab state for specific CSV
-  setTabState(campaignId: string, csvVersionId: string, tabState: TabState): void {
-    const csvState = this.getCSVState(campaignId, csvVersionId);
+  // Set tab state for specific CSV using content hash
+  setTabState(campaignId: string, csvContentHash: string, tabState: TabState): void {
+    const csvState = this.getCSVState(campaignId, csvContentHash);
     if (csvState) {
       csvState.tabStates = tabState;
-      this.setCSVState(campaignId, csvVersionId, csvState);
+      this.setCSVState(campaignId, csvContentHash, csvState);
     }
   }
   
-  // Get active tab index
-  getActiveTab(campaignId: string, csvVersionId: string): number {
-    const csvState = this.getCSVState(campaignId, csvVersionId);
+  // Get active tab index using content hash
+  getActiveTab(campaignId: string, csvContentHash: string): number {
+    const csvState = this.getCSVState(campaignId, csvContentHash);
     return csvState?.activeTab || 0;
   }
   
-  // Set active tab index
-  setActiveTab(campaignId: string, csvVersionId: string, tabIndex: number, updatedBy: string): void {
-    const csvState = this.getCSVState(campaignId, csvVersionId);
+  // Set active tab index using content hash
+  setActiveTab(campaignId: string, csvContentHash: string, tabIndex: number, updatedBy: string): void {
+    const csvState = this.getCSVState(campaignId, csvContentHash);
     if (csvState) {
       csvState.activeTab = tabIndex;
       csvState.tabStates = updateTabState(csvState.tabStates, {}, updatedBy);
-      this.setCSVState(campaignId, csvVersionId, csvState);
+      this.setCSVState(campaignId, csvContentHash, csvState);
     }
   }
   
-  // Get power analysis state
-  getPowerAnalysisState(campaignId: string, csvVersionId: string): TabState['powerAnalysisState'] | null {
-    const tabState = this.getTabState(campaignId, csvVersionId);
+  // Get power analysis state using content hash
+  getPowerAnalysisState(campaignId: string, csvContentHash: string): TabState['powerAnalysisState'] | null {
+    const tabState = this.getTabState(campaignId, csvContentHash);
     return tabState?.powerAnalysisState || null;
   }
   
-  // Set power analysis state
+  // Set power analysis state using content hash
   setPowerAnalysisState(
     campaignId: string, 
-    csvVersionId: string, 
+    csvContentHash: string, 
     powerAnalysisState: Partial<TabState['powerAnalysisState']>, 
     updatedBy: string
   ): void {
-    const csvState = this.getCSVState(campaignId, csvVersionId);
+    const csvState = this.getCSVState(campaignId, csvContentHash);
     if (csvState) {
       csvState.tabStates = updatePowerAnalysisState(csvState.tabStates, powerAnalysisState, updatedBy);
-      this.setCSVState(campaignId, csvVersionId, csvState);
+      this.setCSVState(campaignId, csvContentHash, csvState);
     }
   }
   
-  // Initialize CSV state
-  initializeCSVState(campaignId: string, csvVersionId: string, uploadedBy: string): CampaignCSVState {
-    const existingState = this.getCSVState(campaignId, csvVersionId);
+  // Initialize CSV state using content hash
+  initializeCSVState(campaignId: string, csvContentHash: string, csvVersionId: string, uploadedBy: string): CampaignCSVState {
+    const existingState = this.getCSVState(campaignId, csvContentHash);
     if (existingState) {
       return existingState;
     }
     
     const newState = createDefaultCampaignCSVState(csvVersionId, uploadedBy);
-    this.setCSVState(campaignId, csvVersionId, newState);
+    this.setCSVState(campaignId, csvContentHash, newState);
     return newState;
   }
   
-  // Clear campaign state
+  // Clear campaign state (removes all CSV states for a campaign)
   clearCampaignState(campaignId: string): void {
-    const key = this.getCampaignStateKey(campaignId);
+    // Remove all keys that start with the campaign prefix
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(`${TAB_STATE_PREFIX}${campaignId}::`)) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+    
+    // Also remove the legacy campaign state key
+    const legacyKey = this.getCampaignStateKey(campaignId);
+    localStorage.removeItem(legacyKey);
+  }
+  
+  // Clear specific CSV state using content hash
+  clearCSVState(campaignId: string, csvContentHash: string): void {
+    const key = this.getCSVStateKey(campaignId, csvContentHash);
     localStorage.removeItem(key);
   }
   
-  // Clear CSV state
-  clearCSVState(campaignId: string, csvVersionId: string): void {
-    const campaignState = this.getCampaignState(campaignId);
-    delete campaignState[csvVersionId];
-    this.setCampaignState(campaignId, campaignState);
-  }
-  
-  // Subscribe to state changes
+  // Subscribe to state changes using content hash
   subscribeToStateChanges(
     campaignId: string, 
-    csvVersionId: string, 
+    csvContentHash: string, 
     callback: (state: CampaignCSVState) => void
   ): () => void {
-    const key = this.getCSVStateKey(campaignId, csvVersionId);
+    const key = this.getCSVStateKey(campaignId, csvContentHash);
     
     if (!this.stateChangeListeners.has(key)) {
       this.stateChangeListeners.set(key, new Set());
@@ -231,7 +254,8 @@ class TabStateManagerImpl implements TabStateManager {
       if (powerAnalysisState || proposalState) {
         console.log(`Migrating session storage data for campaign ${campaignId}`);
         
-        // Create a default CSV state for migration
+        // Create a migration hash for old data
+        const migrationHash = `migrated_${Date.now()}`;
         const migrationCsvId = `migrated_${Date.now()}`;
         const defaultState = createDefaultCampaignCSVState(migrationCsvId, 'system');
         
@@ -241,8 +265,8 @@ class TabStateManagerImpl implements TabStateManager {
           sessionStorage.removeItem(powerAnalysisKey);
         }
         
-        this.setCSVState(campaignId, migrationCsvId, defaultState);
-        console.log(`Migration completed for campaign ${campaignId}`);
+        this.setCSVState(campaignId, migrationHash, defaultState);
+        console.log(`Migration completed for campaign ${campaignId} with hash ${migrationHash}`);
       }
     } catch (error) {
       console.error('Error migrating from session storage:', error);
@@ -305,6 +329,26 @@ class TabStateManagerImpl implements TabStateManager {
     });
     return deserialized;
   }
+
+  private serializeSingleState(state: CampaignCSVState): any {
+    return {
+      ...state,
+      tabStates: {
+        ...state.tabStates,
+        lastUpdatedAt: state.tabStates.lastUpdatedAt.toISOString()
+      }
+    };
+  }
+
+  private deserializeSingleState(serialized: any): CampaignCSVState {
+    return {
+      ...serialized,
+      tabStates: {
+        ...serialized.tabStates,
+        lastUpdatedAt: new Date(serialized.tabStates.lastUpdatedAt)
+      }
+    };
+  }
   
   private getLastUpdatedTime(data: any): number {
     if (data.tabStates?.lastUpdatedAt) {
@@ -313,51 +357,43 @@ class TabStateManagerImpl implements TabStateManager {
     return 0;
   }
   
-  private notifyStateChange(campaignId: string, states: Record<string, CampaignCSVState>): void {
-    Object.keys(states).forEach(csvVersionId => {
-      const key = this.getCSVStateKey(campaignId, csvVersionId);
-      const listeners = this.stateChangeListeners.get(key);
-      if (listeners) {
-        listeners.forEach(callback => callback(states[csvVersionId]));
-      }
-    });
-  }
+  // Note: Notification is now handled per individual CSV state, not batch
 }
 
 // Export singleton instance
 export const tabStateManager = new TabStateManagerImpl();
 
 // Export utility functions for external use
-export const initializeTabStateForCampaign = (campaignId: string, csvVersionId: string, uploadedBy: string): CampaignCSVState => {
-  return tabStateManager.initializeCSVState(campaignId, csvVersionId, uploadedBy);
+export const initializeTabStateForCampaign = (campaignId: string, csvContentHash: string, csvVersionId: string, uploadedBy: string): CampaignCSVState => {
+  return tabStateManager.initializeCSVState(campaignId, csvContentHash, csvVersionId, uploadedBy);
 };
 
-export const getTabStateForCampaign = (campaignId: string, csvVersionId: string): TabState | null => {
-  return tabStateManager.getTabState(campaignId, csvVersionId);
+export const getTabStateForCampaign = (campaignId: string, csvContentHash: string): TabState | null => {
+  return tabStateManager.getTabState(campaignId, csvContentHash);
 };
 
 export const updateTabStateForCampaign = (
   campaignId: string, 
-  csvVersionId: string, 
+  csvContentHash: string, 
   updates: Partial<TabState>, 
   updatedBy: string
 ): void => {
-  const currentState = tabStateManager.getTabState(campaignId, csvVersionId);
+  const currentState = tabStateManager.getTabState(campaignId, csvContentHash);
   if (currentState) {
     const newState = updateTabState(currentState, updates, updatedBy);
-    tabStateManager.setTabState(campaignId, csvVersionId, newState);
+    tabStateManager.setTabState(campaignId, csvContentHash, newState);
   }
 };
 
-export const switchActiveTab = (campaignId: string, csvVersionId: string, tabIndex: number, updatedBy: string): void => {
-  tabStateManager.setActiveTab(campaignId, csvVersionId, tabIndex, updatedBy);
+export const switchActiveTab = (campaignId: string, csvContentHash: string, tabIndex: number, updatedBy: string): void => {
+  tabStateManager.setActiveTab(campaignId, csvContentHash, tabIndex, updatedBy);
 };
 
 export const updatePowerAnalysisStateForCampaign = (
   campaignId: string, 
-  csvVersionId: string, 
+  csvContentHash: string, 
   updates: Partial<TabState['powerAnalysisState']>, 
   updatedBy: string
 ): void => {
-  tabStateManager.setPowerAnalysisState(campaignId, csvVersionId, updates, updatedBy);
+  tabStateManager.setPowerAnalysisState(campaignId, csvContentHash, updates, updatedBy);
 }; 

@@ -34,6 +34,7 @@ import CollaborativeTextField from './CollaborativeTextField';
 
 interface PowerAnalysisProps {
   campaignId?: string;
+  csvVersionId?: string; // Add CSV version ID for proper state isolation
   csvData: any;
   onSampleSizeCalculated: (sampleSize: string, variance?: string) => void;
   onValuesChanged: (values: {
@@ -112,6 +113,7 @@ const calculateGroupSampleSizes = (totalSize: number, ratios: AllocationRatio[])
 
 const PowerAnalysis: React.FC<PowerAnalysisProps> = ({ 
   campaignId, 
+  csvVersionId,
   csvData, 
   onSampleSizeCalculated,
   onValuesChanged 
@@ -133,12 +135,26 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
     ]
   };
 
-  // Get initial state from session storage or use defaults
+  // Get initial state using strict composite key (campaignId + csvVersionId)
   const getInitialState = () => {
-    if (campaignId) {
+    if (campaignId && csvVersionId) {
+      // Use the actual CSV version ID for precise state matching
+      const compositeKey = `powerAnalysisState_${campaignId}::${csvVersionId}`;
+      const storedState = localStorage.getItem(compositeKey);
+      if (storedState) {
+        return JSON.parse(storedState);
+      }
+      
+      // Fallback to session storage for migration (only if exact match)
       const sessionState = sessionStorage.getItem(`powerAnalysisState_${campaignId}`);
       if (sessionState) {
-        return JSON.parse(sessionState);
+        const parsed = JSON.parse(sessionState);
+        // Only migrate if we have a valid csvVersionId
+        if (csvVersionId) {
+          localStorage.setItem(compositeKey, JSON.stringify(parsed));
+          sessionStorage.removeItem(`powerAnalysisState_${campaignId}`);
+          return parsed;
+        }
       }
     }
     return defaultValues;
@@ -182,9 +198,11 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
     { value: 'custom', label: 'Custom value' }
   ];
 
-  // Save state to sessionStorage whenever values change
+  // Save state to localStorage using strict composite key whenever values change
   useEffect(() => {
-    if (campaignId) {
+    if (campaignId && csvVersionId) {
+      // Use the actual CSV version ID for precise state matching
+      const compositeKey = `powerAnalysisState_${campaignId}::${csvVersionId}`;
       const stateToSave = {
         selectedMetric,
         alpha,
@@ -197,7 +215,7 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
         customPaths,
         allocationRatios
       };
-      sessionStorage.setItem(`powerAnalysisState_${campaignId}`, JSON.stringify(stateToSave));
+      localStorage.setItem(compositeKey, JSON.stringify(stateToSave));
     }
 
     // Notify parent component of value changes for HypothesisTestingProposal sync
@@ -209,8 +227,9 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
       selectedMetric,
       variance: (csvData?.statistics?.[selectedMetric]?.standardDeviation ** 2)?.toString() || ''
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedMetric, alpha, beta, mde, customMde, mdeType, testType, numPaths, customPaths, 
-      allocationRatios, onValuesChanged, csvData?.statistics, campaignId]);
+      allocationRatios, onValuesChanged, csvData?.statistics, campaignId, csvVersionId]);
 
   // Clear session storage on page unload
   useEffect(() => {
@@ -247,6 +266,25 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaignId]);
+
+  // Reset state when csvVersionId changes to ensure proper state isolation
+  useEffect(() => {
+    const newState = getInitialState();
+    setSelectedMetric(newState.selectedMetric);
+    setAlpha(newState.alpha);
+    setBeta(newState.beta);
+    setMde(newState.mde);
+    setCustomMde(newState.customMde);
+    setMdeType(newState.mdeType);
+    setTestType(newState.testType);
+    setNumPaths(newState.numPaths);
+    setCustomPaths(newState.customPaths);
+    setAllocationRatios(newState.allocationRatios);
+    setResults(null);
+    setError('');
+    console.log(`PowerAnalysis: State reset for CSV version: ${csvVersionId}`);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [csvVersionId]);
 
   const handleMetricSelect = (value: string) => {
     setSelectedMetric(value);
@@ -573,9 +611,10 @@ const PowerAnalysis: React.FC<PowerAnalysisProps> = ({
     setError('');
     setAllocationRatios(defaultValues.allocationRatios);
     
-    // Clear session storage
-    if (campaignId) {
-      sessionStorage.removeItem(`powerAnalysisState_${campaignId}`);
+    // Clear localStorage with strict composite key
+    if (campaignId && csvVersionId) {
+      const compositeKey = `powerAnalysisState_${campaignId}::${csvVersionId}`;
+      localStorage.removeItem(compositeKey);
     }
     
     // Clear the calculated values

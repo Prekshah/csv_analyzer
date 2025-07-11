@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Container,
@@ -43,13 +43,19 @@ import HypothesisTestingProposal from './components/HypothesisTestingProposal';
 import LoginScreen from './components/LoginScreen';
 import ProfileDropdown from './components/ProfileDropdown';
 import CampaignManager from './components/CampaignManager';
+import CSVDownloadButton from './components/CSVDownloadButton';
+import CSVVersionManager from './components/CSVVersionManager';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { Campaign, CSVAnalysis } from './types/Campaign';
 import {
   createCampaign as firestoreCreateCampaign,
   updateCampaign as firestoreUpdateCampaign,
-  getCampaign as firestoreGetCampaign
+  getCampaign as firestoreGetCampaign,
+  touchCampaign
 } from './utils/firestoreCampaignService';
+import {
+  updateCampaignActiveTab
+} from './utils/firestoreCSVService';
 /* Temporarily commented out */
 // import GroupSplitting from './components/GroupSplitting';
 
@@ -1010,6 +1016,30 @@ function AuthenticatedApp() {
     variance: string;
   } | null>(null);
   
+
+
+  // Helper function to clean up state for strict isolation
+  const clearAllTabState = () => {
+    setCsvData(null);
+    setPowerAnalysisValues(null);
+    setCalculatedSampleSize('');
+    setCalculatedVariance('');
+    setSelectedDependentMetric('');
+    setManualMetricInput('');
+    setMetricError('');
+    setActiveTab(0);
+    setIsProcessing(false);
+  };
+
+  // Watch for changes in active CSV version to ensure proper state isolation
+  useEffect(() => {
+    if (currentCampaign?.activeCsvVersionId) {
+      console.log(`Active CSV version changed to: ${currentCampaign.activeCsvVersionId}`);
+      // The components using the key prop will automatically re-render
+      // This effect is mainly for logging and potential future enhancements
+    }
+  }, [currentCampaign?.activeCsvVersionId]);
+
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
       setFile(event.target.files[0]);
@@ -1029,22 +1059,81 @@ function AuthenticatedApp() {
 
   // Campaign management functions
   const handleCampaignSelect = async (campaign: Campaign) => {
-    // Clear all campaign-specific state
-    setCsvData(null);
-    setFile(null);
-    setPowerAnalysisValues(null);
-    setCalculatedSampleSize('');
-    setCalculatedVariance('');
-    setSelectedDependentMetric('');
-    setManualMetricInput('');
-    setMetricError('');
-    setIsProcessing(false);
-    setActiveTab(0);
+    // Clear all campaign-specific state completely to prevent cross-campaign leakage
+    clearAllTabState();
+    
     // Set new campaign
     setCurrentCampaign(campaign);
     setView('analysis');
-    // Load existing CSV data if available
-    if (campaign.csvAnalysis) {
+    
+    console.log(`Selecting campaign: ${campaign.id}, CSV versions: ${Object.keys(campaign.csvVersions || {}).length}`);
+    
+    // Load CSV data based on new multi-CSV structure with strict isolation
+    if (campaign.activeCsvVersionId && campaign.csvVersions?.[campaign.activeCsvVersionId]) {
+      const activeCsvVersion = campaign.csvVersions[campaign.activeCsvVersionId];
+      if (activeCsvVersion.analysis) {
+        setCsvData({
+          rowCount: activeCsvVersion.analysis.rowCount,
+          columnCount: activeCsvVersion.analysis.columnCount,
+          columns: activeCsvVersion.analysis.columns,
+          data: activeCsvVersion.analysis.data,
+          statistics: activeCsvVersion.analysis.statistics,
+          dependencies: activeCsvVersion.analysis.dependencies,
+          dependentMetrics: activeCsvVersion.analysis.dependentMetrics
+        });
+        
+        // Clear file state since we have existing CSV data
+        setFile(null);
+        
+        // Restore tab state ONLY for this specific campaign + CSV combination
+        const compositeKey = `${campaign.id}::${campaign.activeCsvVersionId}`;
+        
+        // Try to restore from localStorage first
+        const powerAnalysisKey = `powerAnalysisState_${compositeKey}`;
+        const savedPowerState = localStorage.getItem(powerAnalysisKey);
+        
+        if (savedPowerState) {
+          try {
+            const parsedPowerState = JSON.parse(savedPowerState);
+            setPowerAnalysisValues({
+              mde: parsedPowerState.mde || '5',
+              mdeType: parsedPowerState.mdeType || 'percentage',
+              power: parsedPowerState.beta ? (1 - parseFloat(parsedPowerState.beta)).toString() : '0.8',
+              significanceLevel: parsedPowerState.alpha || '0.05',
+              selectedMetric: parsedPowerState.selectedMetric || '',
+              variance: ''
+            });
+          } catch (error) {
+            console.error('Error parsing saved power analysis state:', error);
+          }
+        }
+        
+        // Restore from Firestore state if available
+        const csvState = campaign.csvStates?.[campaign.activeCsvVersionId];
+        if (csvState) {
+          setActiveTab(csvState.activeTab || 0);
+          setSelectedDependentMetric(csvState.tabStates.selectedDependentMetric || '');
+          setManualMetricInput(csvState.tabStates.manualMetricInput || '');
+          setCalculatedSampleSize(csvState.tabStates.calculatedSampleSize || '');
+          setCalculatedVariance(csvState.tabStates.calculatedVariance || '');
+          
+          // Restore power analysis values from Firestore if not found in localStorage
+          if (!savedPowerState && csvState.tabStates.powerAnalysisState) {
+            setPowerAnalysisValues({
+              mde: csvState.tabStates.powerAnalysisState.mde,
+              mdeType: csvState.tabStates.powerAnalysisState.mdeType as 'absolute' | 'percentage',
+              power: (1 - parseFloat(csvState.tabStates.powerAnalysisState.beta)).toString(),
+              significanceLevel: csvState.tabStates.powerAnalysisState.alpha,
+              selectedMetric: csvState.tabStates.powerAnalysisState.selectedMetric,
+              variance: ''
+            });
+          }
+        }
+        
+        console.log(`Restored state for campaign ${campaign.id} CSV ${campaign.activeCsvVersionId}`);
+      }
+    } else if (campaign.csvAnalysis) {
+      // Fallback to legacy single CSV structure
       setCsvData({
         rowCount: campaign.csvAnalysis.rowCount,
         columnCount: campaign.csvAnalysis.columnCount,
@@ -1054,6 +1143,13 @@ function AuthenticatedApp() {
         dependencies: campaign.csvAnalysis.dependencies,
         dependentMetrics: campaign.csvAnalysis.dependentMetrics
       });
+      
+      // Clear file state since we have existing CSV data
+      setFile(null);
+    } else {
+      // No CSV data in campaign, keep file state to allow upload
+      // Don't clear file state here
+      console.log(`Campaign ${campaign.id} has no CSV data, ready for upload`);
     }
   };
 
@@ -1068,6 +1164,104 @@ function AuthenticatedApp() {
   const handleBackToCampaigns = () => {
     setView('campaigns');
     setCurrentCampaign(null);
+  };
+
+
+
+  // Handle CSV version switching within a campaign with strict state isolation
+  const handleCSVVersionSwitch = async (csvVersionId: string) => {
+    if (!currentCampaign || !user) return;
+    
+    try {
+      // Update active CSV version in Firestore
+      await firestoreUpdateCampaign(currentCampaign.id, {
+        activeCsvVersionId: csvVersionId
+      }, user?.uid || '');
+
+      // Touch campaign to update its updatedAt and updatedBy fields
+      await touchCampaign(currentCampaign.id, {
+        uid: user.uid,
+        displayName: user.displayName || 'Unknown User',
+        email: user.email || 'unknown@games24x7.com'
+      });
+      
+      // Get the new CSV version data
+      const csvVersion = currentCampaign.csvVersions?.[csvVersionId];
+      if (csvVersion?.analysis) {
+        // Clear current state completely to prevent leakage
+        clearAllTabState();
+        
+        // Update local CSV data
+        setCsvData({
+          rowCount: csvVersion.analysis.rowCount,
+          columnCount: csvVersion.analysis.columnCount,
+          columns: csvVersion.analysis.columns,
+          data: csvVersion.analysis.data,
+          statistics: csvVersion.analysis.statistics,
+          dependencies: csvVersion.analysis.dependencies,
+          dependentMetrics: csvVersion.analysis.dependentMetrics
+        });
+        
+        // Restore tab state ONLY for this specific CSV version using content hash
+        const contentHash = csvVersion.contentHash;
+        const compositeKey = `${currentCampaign.id}::${csvVersionId}`;
+        
+        // Try to restore from localStorage first (for immediate response)
+        const powerAnalysisKey = `powerAnalysisState_${compositeKey}`;
+        // const proposalKey = `proposalState_${compositeKey}`; // Reserved for future use
+        
+        const savedPowerState = localStorage.getItem(powerAnalysisKey);
+        // const savedProposalState = localStorage.getItem(proposalKey); // Reserved for future use
+        
+        if (savedPowerState) {
+          try {
+            const parsedPowerState = JSON.parse(savedPowerState);
+            setPowerAnalysisValues({
+              mde: parsedPowerState.mde || '5',
+              mdeType: parsedPowerState.mdeType || 'percentage',
+              power: parsedPowerState.beta ? (1 - parseFloat(parsedPowerState.beta)).toString() : '0.8',
+              significanceLevel: parsedPowerState.alpha || '0.05',
+              selectedMetric: parsedPowerState.selectedMetric || '',
+              variance: ''
+            });
+          } catch (error) {
+            console.error('Error parsing saved power analysis state:', error);
+          }
+        }
+        
+        // Restore from Firestore state if available
+        const csvState = currentCampaign.csvStates?.[csvVersionId];
+        if (csvState) {
+          setActiveTab(csvState.activeTab || 0);
+          setSelectedDependentMetric(csvState.tabStates.selectedDependentMetric || '');
+          setManualMetricInput(csvState.tabStates.manualMetricInput || '');
+          setCalculatedSampleSize(csvState.tabStates.calculatedSampleSize || '');
+          setCalculatedVariance(csvState.tabStates.calculatedVariance || '');
+          
+          // Restore power analysis values from Firestore if not found in localStorage
+          if (!savedPowerState && csvState.tabStates.powerAnalysisState) {
+            setPowerAnalysisValues({
+              mde: csvState.tabStates.powerAnalysisState.mde,
+              mdeType: csvState.tabStates.powerAnalysisState.mdeType as 'absolute' | 'percentage',
+              power: (1 - parseFloat(csvState.tabStates.powerAnalysisState.beta)).toString(),
+              significanceLevel: csvState.tabStates.powerAnalysisState.alpha,
+              selectedMetric: csvState.tabStates.powerAnalysisState.selectedMetric,
+              variance: ''
+            });
+          }
+        }
+        
+        // Update current campaign with new active CSV version
+        setCurrentCampaign({
+          ...currentCampaign,
+          activeCsvVersionId: csvVersionId
+        });
+        
+        console.log(`Switched to CSV version: ${csvVersionId} with content hash: ${contentHash} - strict state isolation applied`);
+      }
+    } catch (error) {
+      console.error('Error switching CSV version:', error);
+    }
   };
 
   const saveCampaignData = async () => {
@@ -1098,13 +1292,27 @@ function AuthenticatedApp() {
       };
 
       if (currentCampaign) {
-        // Update existing campaign
-        await firestoreUpdateCampaign(currentCampaign.id, {
-          csvAnalysis
-        }, user.uid);
-        console.log('Campaign data saved successfully');
+        // Add CSV version to existing campaign using new versioning system
+        const { addCSVToCampaign } = await import('./utils/firestoreCSVService');
+        const csvVersion = await addCSVToCampaign(currentCampaign.id, file, csvAnalysis, user.uid);
+        
+        // Update current campaign state with new CSV version
+        const updatedCampaign = {
+          ...currentCampaign,
+          activeCsvVersionId: csvVersion.id,
+          csvVersions: {
+            ...currentCampaign.csvVersions,
+            [csvVersion.id]: csvVersion
+          }
+        };
+        
+        // CRITICAL: Trigger proper state restoration flow for the new CSV version
+        // This ensures tab state is properly isolated and restored for the new CSV
+        await handlePostCSVUpload(updatedCampaign, csvVersion.id, csvVersion.contentHash);
+        
+        console.log(`CSV version added to campaign successfully. New active CSV: ${csvVersion.id}`);
       } else {
-        // Create new campaign
+        // Create new campaign with CSV versioning support
         const campaignName = `Analysis of ${file.name.replace('.csv', '')}`;
         const campaignId = await firestoreCreateCampaign({
           name: campaignName,
@@ -1124,23 +1332,125 @@ function AuthenticatedApp() {
             }
           },
           isPublic: false,
-          csvAnalysis
+          csvAnalysis // Keep for backward compatibility
         }, user.uid);
         
-        // Get the created campaign
+        // Add CSV version to the new campaign
+        const { addCSVToCampaign } = await import('./utils/firestoreCSVService');
+        const csvVersion = await addCSVToCampaign(campaignId, file, csvAnalysis, user.uid);
+        
+        // Get the created campaign with CSV version
         const newCampaign = await firestoreGetCampaign(campaignId);
-        setCurrentCampaign(newCampaign);
-        console.log('New campaign created successfully');
+        if (!newCampaign) {
+          throw new Error('Failed to retrieve created campaign');
+        }
+        
+        // CRITICAL: Trigger proper state restoration flow for the new campaign/CSV
+        await handlePostCSVUpload(newCampaign, csvVersion.id, csvVersion.contentHash);
+        
+        console.log(`New campaign created with CSV versioning successfully. Campaign: ${campaignId}, CSV: ${csvVersion.id}`);
       }
     } catch (error) {
       console.error('Error saving campaign data:', error);
     }
   };
 
+  // Helper function to handle post-CSV upload state restoration
+  const handlePostCSVUpload = async (campaign: Campaign, csvVersionId: string, contentHash: string) => {
+    // Set the updated campaign
+    setCurrentCampaign(campaign);
+    
+    // Clear file state since we now have CSV data
+    setFile(null);
+    
+    // Get the CSV version data
+    const csvVersion = campaign.csvVersions?.[csvVersionId];
+    if (!csvVersion?.analysis) {
+      console.error('No analysis data found for uploaded CSV version');
+      return;
+    }
+    
+    // The CSV data is already set in processFile, but ensure it's correct
+    // (this should be redundant but ensures consistency)
+    setCsvData({
+      rowCount: csvVersion.analysis.rowCount,
+      columnCount: csvVersion.analysis.columnCount,
+      columns: csvVersion.analysis.columns,
+      data: csvVersion.analysis.data,
+      statistics: csvVersion.analysis.statistics,
+      dependencies: csvVersion.analysis.dependencies,
+      dependentMetrics: csvVersion.analysis.dependentMetrics
+    });
+    
+    // Check if this is an existing CSV being reactivated or a new CSV
+    const isExistingCSV = campaign.csvStates?.[csvVersionId] !== undefined;
+    
+    if (isExistingCSV) {
+      // Existing CSV: Restore its saved state
+      console.log(`Restoring state for existing CSV version: ${csvVersionId}`);
+      
+      // Restore tab state for this specific CSV version
+      const compositeKey = `${campaign.id}::${csvVersionId}`;
+      
+      // Try to restore from localStorage first
+      const powerAnalysisKey = `powerAnalysisState_${compositeKey}`;
+      const savedPowerState = localStorage.getItem(powerAnalysisKey);
+      
+      if (savedPowerState) {
+        try {
+          const parsedPowerState = JSON.parse(savedPowerState);
+          setPowerAnalysisValues({
+            mde: parsedPowerState.mde || '5',
+            mdeType: parsedPowerState.mdeType || 'percentage',
+            power: parsedPowerState.beta ? (1 - parseFloat(parsedPowerState.beta)).toString() : '0.8',
+            significanceLevel: parsedPowerState.alpha || '0.05',
+            selectedMetric: parsedPowerState.selectedMetric || '',
+            variance: ''
+          });
+        } catch (error) {
+          console.error('Error parsing saved power analysis state:', error);
+        }
+      }
+      
+      // Restore from Firestore state if available
+      const csvState = campaign.csvStates?.[csvVersionId];
+      if (csvState) {
+        setActiveTab(csvState.activeTab || 0);
+        setSelectedDependentMetric(csvState.tabStates.selectedDependentMetric || '');
+        setManualMetricInput(csvState.tabStates.manualMetricInput || '');
+        setCalculatedSampleSize(csvState.tabStates.calculatedSampleSize || '');
+        setCalculatedVariance(csvState.tabStates.calculatedVariance || '');
+        
+        // Restore power analysis values from Firestore if not found in localStorage
+        if (!savedPowerState && csvState.tabStates.powerAnalysisState) {
+          setPowerAnalysisValues({
+            mde: csvState.tabStates.powerAnalysisState.mde,
+            mdeType: csvState.tabStates.powerAnalysisState.mdeType as 'absolute' | 'percentage',
+            power: (1 - parseFloat(csvState.tabStates.powerAnalysisState.beta)).toString(),
+            significanceLevel: csvState.tabStates.powerAnalysisState.alpha,
+            selectedMetric: csvState.tabStates.powerAnalysisState.selectedMetric,
+            variance: ''
+          });
+        }
+      }
+    } else {
+      // New CSV: State was already cleared in processFile, keep it fresh
+      console.log(`New CSV version uploaded: ${csvVersionId} - starting with fresh state`);
+      // State is already cleared by clearAllTabState() in processFile
+      // No additional action needed - components will start fresh
+    }
+    
+    console.log(`State restoration completed for campaign ${campaign.id} CSV ${csvVersionId} (${isExistingCSV ? 'existing' : 'new'}) with content hash: ${contentHash}`);
+  };
+
   const processFile = () => {
     if (!file) return;
     
     setIsProcessing(true);
+    
+    // CRITICAL: Clear all tab state BEFORE processing new CSV to prevent data leakage
+    clearAllTabState();
+    
     Papa.parse(file, {
       complete: (results) => {
         try {
@@ -1212,6 +1522,7 @@ function AuthenticatedApp() {
         // Combine both types of dependencies
         const allDependencies = [...generalDependencies, ...targetDependencies];
 
+        // Set new CSV data (state was already cleared above)
         setCsvData({
             rowCount: filteredData.length,
           columnCount: headers.length,
@@ -1222,10 +1533,7 @@ function AuthenticatedApp() {
           dependentMetrics: autoDetectedMetrics
         });
 
-        // Reset selection state when loading new file
-        setSelectedDependentMetric('');
-        setManualMetricInput('');
-        setMetricError('');
+        // Reset processing state
         setIsProcessing(false);
           
           // Auto-save to campaign (create new if none exists)
@@ -2384,6 +2692,33 @@ function AuthenticatedApp() {
             <Typography color="text.secondary" gutterBottom>
               {currentCampaign.description}
             </Typography>
+            
+            {/* CSV Version Manager */}
+            {currentCampaign.csvVersions && Object.keys(currentCampaign.csvVersions).length > 0 ? (
+              <CSVVersionManager
+                campaignId={currentCampaign.id}
+                csvVersions={currentCampaign.csvVersions}
+                activeCsvVersionId={currentCampaign.activeCsvVersionId}
+                onSwitchVersion={handleCSVVersionSwitch}
+                compact={true}
+              />
+            ) : (
+              currentCampaign.activeCsvVersionId && currentCampaign.csvVersions?.[currentCampaign.activeCsvVersionId] && (
+                <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Active CSV: {currentCampaign.csvVersions[currentCampaign.activeCsvVersionId].fileName}
+                  </Typography>
+                  {user?.uid !== currentCampaign.csvVersions[currentCampaign.activeCsvVersionId].uploadedBy && (
+                    <CSVDownloadButton
+                      campaignId={currentCampaign.id}
+                      csvVersion={currentCampaign.csvVersions[currentCampaign.activeCsvVersionId]}
+                      variant="icon"
+                      size="small"
+                    />
+                  )}
+                </Box>
+              )
+            )}
           </Box>
         )}
       
@@ -2392,8 +2727,15 @@ function AuthenticatedApp() {
         onDragOver={handleDragOver}
       >
         <Typography variant="h6" gutterBottom>
-          {file ? 'Selected file:' : 'Upload your CSV file'}
+          {file ? 'Selected file:' : csvData ? 'Upload another dataset to this campaign' : 'Upload your CSV file'}
         </Typography>
+        
+        {csvData && !file && (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2, fontStyle: 'italic' }}>
+            💡 Upload a different CSV file to explore or test different data without losing your previous work. 
+            Each CSV gets its own analysis workspace - you can switch between versions anytime.
+          </Typography>
+        )}
         
         {file ? (
           <>
@@ -2426,14 +2768,14 @@ function AuthenticatedApp() {
         ) : (
           <>
             <Typography color="text.secondary" gutterBottom>
-              Drag and drop a CSV file here, or click the button below
+              {csvData ? 'Drag and drop another CSV file here, or click the button below' : 'Drag and drop a CSV file here, or click the button below'}
             </Typography>
             <Button
               component="label"
               variant="contained"
               startIcon={<CloudUploadIcon />}
             >
-              Select CSV File
+              {csvData ? 'Select Another CSV File' : 'Select CSV File'}
               <VisuallyHiddenInput
                 type="file"
                 accept=".csv"
@@ -2447,7 +2789,26 @@ function AuthenticatedApp() {
       {csvData && (
           <Box sx={{ width: '100%', typography: 'body1' }}>
           <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-              <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)} aria-label="analysis tabs">
+              <Tabs value={activeTab} onChange={async (e, newValue) => {
+                setActiveTab(newValue);
+                // Broadcast tab change to collaborators with CSV context
+                if (currentCampaign?.activeCsvVersionId && user) {
+                  updateCampaignActiveTab(currentCampaign.id, currentCampaign.activeCsvVersionId, newValue, user.uid);
+                  
+                  // Touch campaign to update its timestamp
+                  try {
+                    await touchCampaign(currentCampaign.id, {
+                      uid: user.uid,
+                      displayName: user.displayName || 'Unknown User',
+                      email: user.email || 'unknown@games24x7.com'
+                    });
+                  } catch (error) {
+                    console.error('Error touching campaign on tab change:', error);
+                  }
+                  
+                  console.log(`Tab changed to ${newValue} for campaign ${currentCampaign.id} CSV ${currentCampaign.activeCsvVersionId}`);
+                }
+              }} aria-label="analysis tabs">
               <Tab label="Summary" />
               <Tab label="Statistics" />
               <Tab label="Distributions" />
@@ -2462,8 +2823,9 @@ function AuthenticatedApp() {
             {activeTab === 2 && renderDistributionsTab()}
             {activeTab === 3 && renderCorrelationsTab()}
             {activeTab === 4 && <PowerAnalysis 
-              key={currentCampaign?.id || 'no-campaign'}
+              key={`${currentCampaign?.id || 'no-campaign'}_${currentCampaign?.activeCsvVersionId || 'no-csv'}`}
               campaignId={currentCampaign?.id}
+              csvVersionId={currentCampaign?.activeCsvVersionId}
               csvData={csvData} 
               onSampleSizeCalculated={(size, variance) => {
                 setCalculatedSampleSize(size);
@@ -2472,8 +2834,9 @@ function AuthenticatedApp() {
               onValuesChanged={(values) => setPowerAnalysisValues(values)}
             />}
             {activeTab === 5 && <HypothesisTestingProposal 
-              key={currentCampaign?.id || 'no-campaign'}
+              key={`${currentCampaign?.id || 'no-campaign'}_${currentCampaign?.activeCsvVersionId || 'no-csv'}`}
               campaignId={currentCampaign?.id}
+              csvVersionId={currentCampaign?.activeCsvVersionId}
               calculatedSampleSize={calculatedSampleSize}
               calculatedVariance={calculatedVariance}
               powerAnalysisValues={powerAnalysisValues}

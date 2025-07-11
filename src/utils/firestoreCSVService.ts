@@ -4,7 +4,6 @@ import {
   onSnapshot, 
   serverTimestamp,
   getDoc,
-  setDoc,
   Unsubscribe
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
@@ -74,8 +73,8 @@ export class FirestoreCSVService {
       // Set as active version (deactivate others)
       const updatedVersions = setActiveCsvVersion(csvVersions, csvVersion.id);
       
-      // Initialize state for new CSV
-      const initialState = tabStateManager.initializeCSVState(campaignId, csvVersion.id, uploadedBy);
+      // Initialize state for new CSV using content hash
+      const initialState = tabStateManager.initializeCSVState(campaignId, csvVersion.contentHash, csvVersion.id, uploadedBy);
       csvStates[csvVersion.id] = initialState;
       
       // Clean up old versions (keep only last 5)
@@ -199,8 +198,8 @@ export class FirestoreCSVService {
       const csvStates = campaignData.csvStates || {};
       
       if (!csvStates[csvVersionId]) {
-        // Initialize state if it doesn't exist
-        csvStates[csvVersionId] = tabStateManager.initializeCSVState(campaignId, csvVersionId, updatedBy);
+        // Initialize state if it doesn't exist - use csvVersionId as fallback hash
+        csvStates[csvVersionId] = tabStateManager.initializeCSVState(campaignId, csvVersionId, csvVersionId, updatedBy);
       }
       
       // Update tab state
@@ -243,7 +242,8 @@ export class FirestoreCSVService {
       const csvStates = campaignData.csvStates || {};
       
       if (!csvStates[csvVersionId]) {
-        csvStates[csvVersionId] = tabStateManager.initializeCSVState(campaignId, csvVersionId, updatedBy);
+        // Use csvVersionId as fallback hash for legacy compatibility
+        csvStates[csvVersionId] = tabStateManager.initializeCSVState(campaignId, csvVersionId, csvVersionId, updatedBy);
       }
       
       // Update active tab

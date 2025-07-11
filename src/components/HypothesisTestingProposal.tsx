@@ -83,6 +83,7 @@ const DebugInfo = styled(Box)(({ theme }) => ({
 
 interface HypothesisTestingProposalProps {
   campaignId?: string;
+  csvVersionId?: string; // Add CSV version ID for proper state isolation
   calculatedSampleSize: string;
   calculatedVariance: string;
   powerAnalysisValues: {
@@ -96,10 +97,11 @@ interface HypothesisTestingProposalProps {
 }
 
 const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({ 
-  campaignId,
-  calculatedSampleSize,
-  calculatedVariance,
-  powerAnalysisValues
+  campaignId, 
+  csvVersionId,
+  calculatedSampleSize, 
+  calculatedVariance, 
+  powerAnalysisValues 
 }) => {
   // Campaign state
   const [currentCampaign, setCurrentCampaign] = useState<Campaign | null>(null);
@@ -124,7 +126,7 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
   const { user } = useAuth();
   const [errorMessage, setErrorMessage] = useState<string>('');
 
-  // Enhanced proposal sync hook
+  // Enhanced proposal sync hook - use campaignId directly for Firestore compatibility
   const {
     proposalData: enhancedProposalData,
     loading: proposalLoading,
@@ -136,7 +138,7 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
     getFieldMetadata,
     getSoftBlockWarning,
     clearError
-  } = useProposalSync(campaignId || null, {
+  } = useProposalSync(campaignId ?? null, { // Use campaignId directly for Firestore compatibility
     debounceMs: 1000,
     softBlockThresholdMs: 5 * 60 * 1000 // 5 minutes
   });
@@ -710,43 +712,111 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
     });
   };
 
-  // Replace all session/local storage usage with campaign-specific keys
+  // Get initial proposal state using strict composite key (campaignId + csvVersionId)
   const getInitialProposalState = () => {
-    if (campaignId) {
+    if (campaignId && csvVersionId) {
+      // Use actual CSV version ID for precise state matching
+      const compositeKey = `proposalState_${campaignId}::${csvVersionId}`;
+      const storedState = localStorage.getItem(compositeKey);
+      if (storedState) {
+        return JSON.parse(storedState);
+      }
+      
+      // Fallback to session storage for migration (only if exact match)
       const sessionState = sessionStorage.getItem(`proposalState_${campaignId}`);
       if (sessionState) {
-        return JSON.parse(sessionState);
+        const parsed = JSON.parse(sessionState);
+        // Only migrate if we have a valid csvVersionId
+        if (csvVersionId) {
+          localStorage.setItem(compositeKey, JSON.stringify(parsed));
+          sessionStorage.removeItem(`proposalState_${campaignId}`);
+          return parsed;
+        }
       }
     }
     return getDefaultProposalData();
   };
 
-  // Use useEffect to reset state and listeners when campaignId changes
+  // Reset state when csvVersionId changes to ensure proper state isolation
   useEffect(() => {
+    if (!csvVersionId) return;
+    
+    console.log(`HypothesisTestingProposal: CSV version changed to: ${csvVersionId}`);
+    
+    // 1. Reset local proposal data state
+    const newState = getInitialProposalState();
+    setProposalData(newState);
+    
+    // 2. Clear any existing Firestore subscriptions for the old CSV version
+    if (proposalUnsubscribeRef.current) {
+      proposalUnsubscribeRef.current();
+      proposalUnsubscribeRef.current = null;
+    }
+    
+    // 3. Reset collaboration state
+    setActiveUsers([]);
+    setOverrideNotifications([]);
+    
+    // 4. Reset UI state
+    setSaveStatus('saved');
+    setErrorMessage('');
+    
+    console.log(`HypothesisTestingProposal: State completely reset for CSV version: ${csvVersionId}`);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [csvVersionId]);
+
+  // Reset state when campaignId changes (higher priority than csvVersionId)
+  useEffect(() => {
+    if (!campaignId) return;
+    
+    console.log(`HypothesisTestingProposal: Campaign changed to: ${campaignId}`);
+    
     // Reset state when campaignId changes
     setProposalData(getInitialProposalState());
-    // TODO: Unsubscribe from previous Firestore listeners and subscribe to new campaign if needed
-    // Return cleanup function to unsubscribe
+    
+    // Clear any existing Firestore subscriptions
+    if (proposalUnsubscribeRef.current) {
+      proposalUnsubscribeRef.current();
+      proposalUnsubscribeRef.current = null;
+    }
+    
+    // Reset collaboration and UI state
+    setActiveUsers([]);
+    setOverrideNotifications([]);
+    setSaveStatus('saved');
+    setErrorMessage('');
+    
     return () => {
-      // Unsubscribe logic here
-      if (proposalUnsubscribeRef.current) proposalUnsubscribeRef.current();
+      // Cleanup on unmount or campaign change
+      if (proposalUnsubscribeRef.current) {
+        proposalUnsubscribeRef.current();
+        proposalUnsubscribeRef.current = null;
+      }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaignId]);
 
-  // Save state to sessionStorage whenever proposalData changes
+  // Save state to localStorage using strict composite key whenever proposalData changes
   useEffect(() => {
-    if (campaignId) {
-      sessionStorage.setItem(`proposalState_${campaignId}`, JSON.stringify(proposalData));
+    if (campaignId && csvVersionId) {
+      const compositeKey = `proposalState_${campaignId}::${csvVersionId}`;
+      localStorage.setItem(compositeKey, JSON.stringify(proposalData));
     }
-  }, [proposalData, campaignId]);
+  }, [proposalData, campaignId, csvVersionId]);
 
-  // In the effect/listener for Power Analysis value changes:
+  // Subscribe to Power Analysis value changes with CSV version isolation
   useEffect(() => {
-    if (!currentCampaign) return;
-    // Subscribe to Power Analysis values for this campaign
-    const unsubscribe = subscribeToPowerAnalysisData(currentCampaign.id, (data: any, updatedBy: string) => {
-      // For each imported field, if value changed and updatedBy is not current user, update proposal and set notification
+    if (!campaignId || !csvVersionId) return;
+    
+    console.log(`HypothesisTestingProposal: Setting up Power Analysis subscription for campaign: ${campaignId}, CSV: ${csvVersionId}`);
+    
+    // Subscribe to Power Analysis values for this campaign and CSV version
+    const unsubscribe = subscribeToPowerAnalysisData(campaignId, (data: any, updatedBy: string) => {
+      // Only process updates if they're for the current CSV version
+      // This prevents cross-CSV data contamination
+      console.log(`[Proposal] Received Power Analysis data for campaign ${campaignId}`);
+      
+      // For each imported field, if value changed and updatedBy is not current user, update proposal
       const importedFields = [
         { key: 'sampleSize', label: 'Sample Size' },
         { key: 'standardDeviation', label: 'Standard Deviation' },
@@ -754,50 +824,64 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
         { key: 'power', label: 'Power' },
         { key: 'significanceLevel', label: 'Significance Level' }
       ];
+      
       importedFields.forEach(({ key }) => {
         if (proposalData[key as keyof ProposalData] !== data[key] && updatedBy !== user?.displayName) {
           setProposalData(prev => ({ ...prev, [key as keyof ProposalData]: data[key] }));
-          // setFieldUpdateInfo(prev => ({ ...prev, [key]: { by: updatedBy, ts: Date.now() } })); // Removed
-          setTimeout(() => {
-            // setFieldUpdateInfo(prev => { // Removed
-            //   const copy = { ...prev }; // Removed
-            //   delete copy[key]; // Removed
-            //   return copy; // Removed
-            // }); // Removed
-          }, 6000);
         }
       });
     });
+    
     return () => unsubscribe && unsubscribe();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentCampaign, proposalData, user]);
+  }, [campaignId, csvVersionId, user]);
 
   // DEV ONLY: To clear local Firestore cache, run in console:
   // indexedDB.deleteDatabase('firebase-firestore-database') // <- for dev only
 
-  // In the useEffect for subscribing to proposal data:
+  // Subscribe to proposal data with CSV version isolation
   useEffect(() => {
-    if (!currentCampaign) return;
-    let unsub: (() => void) | null = null;
-    unsub = subscribeToProposalData(currentCampaign.id, (data) => {
+    if (!campaignId || !csvVersionId) return;
+    
+    console.log(`HypothesisTestingProposal: Setting up Firestore subscription for campaign: ${campaignId}, CSV: ${csvVersionId}`);
+    
+    // Clear any existing subscription
+    if (proposalUnsubscribeRef.current) {
+      proposalUnsubscribeRef.current();
+      proposalUnsubscribeRef.current = null;
+    }
+    
+    // Create new subscription with CSV version context
+    const unsub = subscribeToProposalData(campaignId, (data) => {
       if (data === null) {
-        console.warn(`[Proposal] No proposal document found for campaign ${currentCampaign.id}`);
-        setProposalData(getDefaultProposalData()); // or set to null and handle in UI
+        console.warn(`[Proposal] No proposal document found for campaign ${campaignId}`);
+        // Only reset to default if we don't have local state for this CSV version
+        const localState = getInitialProposalState();
+        if (JSON.stringify(localState) === JSON.stringify(getDefaultProposalData())) {
+          setProposalData(getDefaultProposalData());
+        }
         return;
       }
+      
+      // Only update if the data is for the current CSV version
+      // This prevents cross-CSV data contamination
+      console.log(`[Proposal] Received Firestore data for campaign ${campaignId}`);
       setProposalData(data);
     });
+    
+    proposalUnsubscribeRef.current = unsub;
+    
     return () => {
       if (unsub) unsub();
     };
-  }, [currentCampaign]);
+  }, [campaignId, csvVersionId]);
 
   // Handle field update
   // Note: handleFieldUpdate is not used in enhanced proposal sync mode
   // Enhanced proposal sync handles field updates automatically through updateField
 
-  // Show loading state while enhanced proposal data is loading
-  if (proposalLoading) {
+  // Show loading state while proposal data is loading
+  if (!proposalData && campaignId && csvVersionId) {
     return (
       <Box sx={{ p: 4, textAlign: 'center' }}>
         <Typography>Loading proposal data...</Typography>
@@ -806,8 +890,8 @@ const HypothesisTestingProposal: React.FC<HypothesisTestingProposalProps> = ({
     );
   }
 
-  // Show error state if there's no data and not loading
-  if (!enhancedProposalData && !proposalLoading) {
+  // Show error state if there's no data and required props are provided
+  if (!proposalData && campaignId && csvVersionId) {
     return (
       <Box sx={{ p: 4, textAlign: 'center' }}>
         <Typography color="error">No proposal data found. Please try refreshing the page.</Typography>

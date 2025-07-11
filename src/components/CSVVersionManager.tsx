@@ -9,7 +9,7 @@ import {
   MenuItem,
   ListItemIcon,
   ListItemText,
-  Divider,
+
   Alert,
   Tooltip,
   IconButton,
@@ -28,9 +28,7 @@ import {
   CheckCircle as CheckCircleIcon,
   History as HistoryIcon,
   Delete as DeleteIcon,
-  SwapHoriz as SwitchIcon,
-  Person as PersonIcon,
-  Schedule as ScheduleIcon
+  SwapHoriz as SwitchIcon
 } from '@mui/icons-material';
 import { CSVFileVersion } from '../types/Campaign';
 import { useAuth } from '../contexts/AuthContext';

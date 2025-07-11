@@ -660,7 +660,24 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
                       <Box display="flex" alignItems="center" gap={0.5}>
                         <ScheduleIcon fontSize="small" color="action" />
                         <Typography variant="caption" color="text.secondary">
-                          Updated {formatDate(campaign.updatedAt)}
+                          {(() => {
+                            // Handle new updatedBy format (object) vs legacy format (string)
+                            const updatedBy = (campaign as any).updatedBy;
+                            let updatedByText = 'Unknown';
+                            
+                            if (updatedBy) {
+                              if (typeof updatedBy === 'object' && updatedBy.displayName) {
+                                // New format: updatedBy is an object with user details
+                                updatedByText = updatedBy.displayName;
+                              } else if (typeof updatedBy === 'string') {
+                                // Legacy format: updatedBy is just a userId, look up in collaborators
+                                const collaborator = campaign.collaborators[updatedBy];
+                                updatedByText = collaborator?.user?.displayName || collaborator?.user?.email || 'Unknown';
+                              }
+                            }
+                            
+                            return `Last updated ${formatDate(campaign.updatedAt)} by ${updatedByText}`;
+                          })()}
                         </Typography>
                       </Box>
                       <Box display="flex" alignItems="center" gap={0.5}>
