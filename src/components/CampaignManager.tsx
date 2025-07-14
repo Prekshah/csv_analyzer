@@ -88,8 +88,19 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const [sortOption, setSortOption] = useState<'lastModified' | 'alphabetical' | 'createdAt'>('lastModified');
   const [filterOption, setFilterOption] = useState<'all' | 'owned' | 'shared'>('all');
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   console.log('[DEBUG][CampaignManager] user:', user);
+  
+  // Debug effect to monitor button state
+  useEffect(() => {
+    console.log('[DEBUG][CampaignManager] Button state:', {
+      collaboratorEmail: collaboratorEmail,
+      emailTrimmed: collaboratorEmail.trim(),
+      loading: loading,
+      isDisabled: !collaboratorEmail.trim() || loading
+    });
+  }, [collaboratorEmail, loading]);
 
   // Helper to safely convert date fields to timestamps
   const getTime = (value: any): number => {
@@ -386,44 +397,106 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
   const handleShareClick = () => {
     setShareDialogOpen(true);
     setShareError(null);
+    setLoading(false); // Ensure loading state is reset when dialog opens
+    setCollaboratorEmail(''); // Clear any previous email
+    setCollaboratorRole('editor'); // Reset role to default
   };
 
   const handleAddCollaborator = async () => {
     if (!selectedCampaign || !collaboratorEmail.trim()) return;
     setShareError(null);
     setLoading(true);
-    // Lookup UID by email using utility
-    const foundUid = await getUidByEmail(collaboratorEmail.trim());
-    if (!foundUid) {
-      setShareError('User not found. They must log in at least once first.');
+    
+    const email = collaboratorEmail.trim();
+    
+    // Validate email format
+    if (!email.includes('@')) {
+      setShareError('Please enter a valid email address.');
       setLoading(false);
       return;
     }
+    
+    // Check if it's a company email
+    if (!email.endsWith('@games24x7.com')) {
+      setShareError('Only @games24x7.com email addresses are allowed.');
+      setLoading(false);
+      return;
+    }
+    
+    // Check if user is trying to add themselves
+    if (user && email === user.email) {
+      setShareError('You cannot add yourself as a collaborator.');
+      setLoading(false);
+      return;
+    }
+    
+    // Check if user is already a collaborator
+    const existingCollaborator = Object.values(selectedCampaign.collaborators).find(
+      collab => collab.user.email.toLowerCase() === email.toLowerCase()
+    );
+    
+    if (existingCollaborator) {
+      setShareError('This user is already a collaborator.');
+      setLoading(false);
+      return;
+    }
+    
+    console.log(`[CampaignManager] Looking up user with email: ${email}`);
+    
+    // Lookup UID by email using utility
+    const foundUid = await getUidByEmail(email);
+    if (!foundUid) {
+      setShareError(`User with email ${email} not found. They must sign in to the app at least once first.`);
+      setLoading(false);
+      return;
+    }
+    
+    console.log(`[CampaignManager] Found UID: ${foundUid} for email: ${email}`);
+    
     const uid = foundUid; // Now guaranteed to be string
     const newCollaborators = { ...selectedCampaign.collaborators };
     newCollaborators[uid] = {
       user: {
         uid,
-        email: collaboratorEmail.trim(),
-        displayName: collaboratorEmail.trim().split('@')[0],
-        photoURL: undefined
+        email: email,
+        displayName: email.split('@')[0]
+        // photoURL is omitted since it's optional and we don't have a value
       },
       role: collaboratorRole,
       addedAt: serverTimestamp(),
       addedBy: user?.uid || ''
     };
     const newCollaboratorIds = Object.keys(newCollaborators);
+    
     try {
-      if (!user) return;
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+      
+      console.log(`[CampaignManager] Adding collaborator ${email} to campaign ${selectedCampaign.id}`);
+      
       await firestoreUpdateCampaign(selectedCampaign.id, {
         collaborators: newCollaborators,
         collaboratorIds: newCollaboratorIds
       }, user.uid);
+      
+      console.log(`[CampaignManager] Successfully added collaborator ${email}`);
+      
       setCollaboratorEmail('');
       setCollaboratorRole('editor');
       setShareError(null);
+      
+      // Show success message
+      if (uid.startsWith('pending_')) {
+        setSuccessMessage(`Added ${email} as a pending collaborator. They'll be activated when they sign in.`);
+        console.log(`[CampaignManager] Added pending user ${email} - they'll be activated when they sign in`);
+      } else {
+        setSuccessMessage(`Successfully added ${email} as a collaborator.`);
+      }
     } catch (err) {
-      setShareError('Failed to add collaborator.');
+      console.error(`[CampaignManager] Error adding collaborator:`, err);
+      setShareError('Failed to add collaborator. Please try again.');
     }
     setLoading(false);
   };
@@ -825,7 +898,10 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
             <TextField
               label="Collaborator Email"
               value={collaboratorEmail}
-              onChange={e => setCollaboratorEmail(e.target.value)}
+              onChange={e => {
+                console.log('Email changed:', e.target.value);
+                setCollaboratorEmail(e.target.value);
+              }}
               fullWidth
               sx={{ mb: 1 }}
             />
@@ -849,7 +925,8 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
               variant="contained"
               startIcon={<PersonAddIcon />}
               onClick={handleAddCollaborator}
-              disabled={!collaboratorEmail.trim()}
+              disabled={!collaboratorEmail.trim() || loading}
+              title={`Button disabled: ${!collaboratorEmail.trim() ? 'Email is empty' : loading ? 'Loading...' : 'Ready to add'}`}
             >
               Add Collaborator
             </Button>
@@ -857,13 +934,28 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
           </Box>
           <Typography variant="subtitle1" sx={{ mb: 1 }}>Current Collaborators:</Typography>
           <List>
-            {selectedCampaign && Object.values(selectedCampaign.collaborators).map((collab, idx) => (
-              <ListItem key={collab.user.uid}>
-                <ListItemText
-                  primary={collab.user.displayName || collab.user.email}
-                  secondary={collab.role}
-                />
-                <ListItemSecondaryAction>
+            {selectedCampaign && Object.values(selectedCampaign.collaborators).map((collab, idx) => {
+              const isPending = collab.user.uid.startsWith('pending_');
+              return (
+                <ListItem key={collab.user.uid}>
+                  <ListItemText
+                    primary={
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <span>{collab.user.displayName || collab.user.email}</span>
+                        {isPending && (
+                          <Chip 
+                            label="Pending" 
+                            size="small" 
+                            color="warning" 
+                            variant="outlined"
+                            title="User hasn't signed in yet - they'll be added when they first log in"
+                          />
+                        )}
+                      </Box>
+                    }
+                    secondary={collab.role}
+                  />
+                  <ListItemSecondaryAction>
                   <FormControl size="small" sx={{ minWidth: 100, mr: 1 }}>
                     <Select
                       value={getValidRole(collab.role) as any}
@@ -887,7 +979,8 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
                   )}
                 </ListItemSecondaryAction>
               </ListItem>
-            ))}
+              );
+            })}
           </List>
         </DialogContent>
         <DialogActions>
@@ -923,6 +1016,18 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
         message={<span style={{ display: 'flex', alignItems: 'center' }}><CircularProgress size={20} style={{ marginRight: 8 }} />Deleting campaign...</span>}
       />
+
+      {/* Success Message Snackbar */}
+      <Snackbar
+        open={!!successMessage}
+        autoHideDuration={6000}
+        onClose={() => setSuccessMessage(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setSuccessMessage(null)} severity="success" sx={{ width: '100%' }}>
+          {successMessage}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

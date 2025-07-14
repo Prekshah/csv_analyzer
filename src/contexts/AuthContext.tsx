@@ -34,12 +34,30 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       await new Promise(resolve => setTimeout(resolve, 100));
       
       try {
-        await setDoc(doc(db, 'users', firebaseUser.uid), {
+        // Check if there's a pending user for this email
+        const { convertPendingUser } = await import('../utils/userUtils');
+        if (firebaseUser.email) {
+          await convertPendingUser(
+            firebaseUser.email,
+            firebaseUser.uid,
+            firebaseUser.displayName || undefined,
+            firebaseUser.photoURL || undefined
+          );
+        }
+        
+        const userData: any = {
           uid: firebaseUser.uid,
           email: firebaseUser.email,
           displayName: firebaseUser.displayName || '',
-          photoURL: firebaseUser.photoURL || ''
-        }, { merge: true });
+          isPending: false
+        };
+        
+        // Only include photoURL if it has a value
+        if (firebaseUser.photoURL) {
+          userData.photoURL = firebaseUser.photoURL;
+        }
+        
+        await setDoc(doc(db, 'users', firebaseUser.uid), userData, { merge: true });
         console.log('[AuthContext] User saved to Firestore successfully');
       } catch (e: any) {
         console.error('[AuthContext] Failed to save user to Firestore:', e?.code, e?.message);

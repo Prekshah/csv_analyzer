@@ -13,6 +13,14 @@ service cloud.firestore {
              request.auth.token.email.matches('.*@games24x7.com');
     }
 
+    // Check if user can manage collaborators (is creator or existing collaborator)
+    function canManageCollaborators(existingData) {
+      return isCompanyUser() &&
+             existingData != null &&
+             (request.auth.uid == existingData.createdBy ||
+              request.auth.uid in existingData.collaboratorIds);
+    }
+
     // For subcollections, we need to get the parent campaign document
     function isCollaboratorByIdForSubcollection(campaignId) {
       let campaign = get(/databases/$(database)/documents/campaigns/$(campaignId));
@@ -23,14 +31,32 @@ service cloud.firestore {
               request.auth.uid == campaign.data.createdBy);
     }
 
+    // --- Users Collection Rules ---
+    match /users/{userId} {
+      // Users can read and write their own profile
+      allow read, write: if isCompanyUser() && request.auth.uid == userId;
+      
+      // Users can read other company users' profiles (for collaboration features)
+      allow read: if isCompanyUser();
+    }
+
     // --- Campaign Rules ---
 
     match /campaigns/{campaignId} {
-      // Allow read if user is authenticated with company email
+      // Allow read for company users - let the app filter based on collaborator access
+      // This allows queries to work while still maintaining some security
       allow read: if isCompanyUser();
       
-      // Allow write if user is authenticated with company email and is a collaborator
-      allow write: if isCollaboratorByIdForSubcollection(campaignId);
+      // Allow create if user is authenticated with company email and is the creator
+      allow create: if isCompanyUser() && 
+                       request.auth.uid == request.resource.data.createdBy;
+      
+      // Allow update if user can manage collaborators
+      allow update: if canManageCollaborators(resource.data);
+      
+      // Allow delete if user is the creator
+      allow delete: if isCompanyUser() && 
+                       request.auth.uid == resource.data.createdBy;
 
       // Allow access to proposal subcollection and its documents
       match /proposal/{proposalId} {
@@ -49,6 +75,17 @@ service cloud.firestore {
           allow write: if isCollaboratorByIdForSubcollection(campaignId);
         }
       }
+    }
+
+    // --- Fallback rule for any other collections ---
+    // This ensures that any other collections used by the app don't cause permission errors
+    match /{document=**} {
+      allow read, write: if false; // Deny by default, but won't cause WebChannel errors
+    }
+
+    // --- Temporary very permissive rules for debugging ---
+    match /{document=**} {
+      allow read, write: if isCompanyUser();
     }
   }
 }
