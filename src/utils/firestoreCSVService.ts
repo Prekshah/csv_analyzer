@@ -90,6 +90,15 @@ export class FirestoreCSVService {
       });
       
       console.log(`Added new CSV version: ${csvVersion.id}`);
+      
+      // Broadcast CSV upload to collaborators
+      try {
+        const { broadcastCollaborationCSVUpload } = await import('./enhancedCollaboration');
+        broadcastCollaborationCSVUpload(csvVersion, uploadedBy);
+      } catch (error) {
+        console.warn('Failed to broadcast CSV upload:', error);
+      }
+      
       return csvVersion;
       
     } catch (error) {

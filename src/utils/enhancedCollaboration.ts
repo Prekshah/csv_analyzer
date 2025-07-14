@@ -24,6 +24,7 @@ export class EnhancedCollaborationManager {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private csvStateListeners: Array<(csvVersionId: string, state: CampaignCSVState) => void> = [];
   private tabStateListeners: Array<(csvVersionId: string, tabIndex: number, state: TabState) => void> = [];
+  private csvUploadListeners: Array<(csvVersion: CSVFileVersion, uploadedBy: string) => void> = [];
 
   constructor() {
     // Add current user to active users
@@ -236,6 +237,36 @@ export class EnhancedCollaborationManager {
     };
   }
 
+  // Subscribe to CSV upload notifications
+  subscribeToCSVUploads(callback: (csvVersion: CSVFileVersion, uploadedBy: string) => void): () => void {
+    this.csvUploadListeners.push(callback);
+    return () => {
+      const index = this.csvUploadListeners.indexOf(callback);
+      if (index > -1) {
+        this.csvUploadListeners.splice(index, 1);
+      }
+    };
+  }
+
+  // Broadcast CSV upload to collaborators
+  broadcastCSVUpload(csvVersion: CSVFileVersion, uploadedBy: string) {
+    if (this.campaignId) {
+      this.sendMessage({
+        type: 'CSV_UPLOAD',
+        campaignId: this.campaignId,
+        userId: this.currentUser.id,
+        userName: this.currentUser.name,
+        timestamp: Date.now(),
+        data: {
+          csvVersion,
+          fileName: csvVersion.fileName,
+          uploadedBy,
+          csvVersionId: csvVersion.id
+        }
+      });
+    }
+  }
+
   // Handle broadcast messages
   private handleBroadcastMessage(message: BroadcastMessage) {
     if (message.campaignId !== this.campaignId) return;
@@ -268,6 +299,9 @@ export class EnhancedCollaborationManager {
         break;
       case 'FIELD_BLUR':
         this.handleFieldBlur(message);
+        break;
+      case 'CSV_UPLOAD':
+        this.handleCSVUpload(message);
         break;
     }
 
@@ -386,6 +420,18 @@ export class EnhancedCollaborationManager {
         user.lastActivity = message.timestamp;
       }
     }
+  }
+
+  private handleCSVUpload(message: BroadcastMessage) {
+    const { csvVersion, uploadedBy } = message.data || {};
+    if (!csvVersion || !uploadedBy) return;
+
+    console.log(`[Collaboration] CSV uploaded by ${message.userName}: ${csvVersion.fileName}`);
+
+    // Notify all CSV upload listeners
+    this.csvUploadListeners.forEach(listener => {
+      listener(csvVersion, uploadedBy);
+    });
   }
 
   // Generate field key with CSV and tab context
@@ -542,4 +588,12 @@ export const updateCollaborationCSVState = (csvVersionId: string, state: Campaig
 
 export const updateCollaborationTabState = (csvVersionId: string, tabIndex: number, tabState: TabState) => {
   enhancedCollaborationManager.updateTabState(csvVersionId, tabIndex, tabState);
+};
+
+export const broadcastCollaborationCSVUpload = (csvVersion: CSVFileVersion, uploadedBy: string) => {
+  enhancedCollaborationManager.broadcastCSVUpload(csvVersion, uploadedBy);
+};
+
+export const subscribeToCollaborationCSVUploads = (callback: (csvVersion: CSVFileVersion, uploadedBy: string) => void) => {
+  return enhancedCollaborationManager.subscribeToCSVUploads(callback);
 }; 

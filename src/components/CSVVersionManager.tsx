@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Paper,
@@ -9,7 +9,6 @@ import {
   MenuItem,
   ListItemIcon,
   ListItemText,
-
   Alert,
   Tooltip,
   IconButton,
@@ -20,7 +19,8 @@ import {
   List,
   ListItem,
   ListItemAvatar,
-  Avatar
+  Avatar,
+  Snackbar
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -33,6 +33,7 @@ import {
 import { CSVFileVersion } from '../types/Campaign';
 import { useAuth } from '../contexts/AuthContext';
 import CSVDownloadButton from './CSVDownloadButton';
+import { subscribeToCollaborationCSVUploads } from '../utils/enhancedCollaboration';
 
 interface CSVVersionManagerProps {
   campaignId: string;
@@ -57,6 +58,10 @@ const CSVVersionManager: React.FC<CSVVersionManagerProps> = ({
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
   const [selectedVersionForDelete, setSelectedVersionForDelete] = useState<string | null>(null);
+  const [newUploadNotification, setNewUploadNotification] = useState<{
+    fileName: string;
+    uploadedBy: string;
+  } | null>(null);
 
   const versions = Object.values(csvVersions).sort((a, b) => 
     new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
@@ -124,6 +129,21 @@ const CSVVersionManager: React.FC<CSVVersionManagerProps> = ({
   const isCurrentUserUpload = (version: CSVFileVersion): boolean => {
     return user?.uid === version.uploadedBy;
   };
+
+  // Subscribe to real-time CSV upload notifications
+  useEffect(() => {
+    const unsubscribe = subscribeToCollaborationCSVUploads((csvVersion, uploadedBy) => {
+      // Only show notification if it's not uploaded by current user
+      if (user?.uid !== uploadedBy) {
+        setNewUploadNotification({
+          fileName: csvVersion.fileName,
+          uploadedBy
+        });
+      }
+    });
+
+    return unsubscribe;
+  }, [user?.uid]);
 
   if (versions.length === 0) {
     return (
@@ -380,6 +400,22 @@ const CSVVersionManager: React.FC<CSVVersionManagerProps> = ({
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Real-time CSV Upload Notification */}
+      <Snackbar
+        open={!!newUploadNotification}
+        autoHideDuration={6000}
+        onClose={() => setNewUploadNotification(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+      >
+        <Alert 
+          onClose={() => setNewUploadNotification(null)} 
+          severity="info" 
+          sx={{ width: '100%' }}
+        >
+          📊 New CSV uploaded: <strong>{newUploadNotification?.fileName}</strong> by {newUploadNotification?.uploadedBy}
+        </Alert>
+      </Snackbar>
     </Paper>
   );
 };

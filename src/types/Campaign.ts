@@ -335,7 +335,7 @@ export interface UserPresence {
 }
 
 export interface BroadcastMessage {
-  type: 'FIELD_UPDATE' | 'FIELD_FOCUS' | 'FIELD_BLUR' | 'USER_JOIN' | 'USER_LEAVE' | 'CONFLICT_DETECTED' | 'OVERRIDE_ATTEMPT' | 'CSV_VERSION_SWITCH' | 'TAB_SWITCH' | 'CSV_STATE_UPDATE' | 'TAB_STATE_UPDATE' | 'USER_HEARTBEAT';
+  type: 'FIELD_UPDATE' | 'FIELD_FOCUS' | 'FIELD_BLUR' | 'USER_JOIN' | 'USER_LEAVE' | 'CONFLICT_DETECTED' | 'OVERRIDE_ATTEMPT' | 'CSV_VERSION_SWITCH' | 'TAB_SWITCH' | 'CSV_STATE_UPDATE' | 'TAB_STATE_UPDATE' | 'USER_HEARTBEAT' | 'CSV_UPLOAD';
   campaignId: string;
   userId: string;
   userName: string;
@@ -353,6 +353,10 @@ export interface BroadcastMessage {
     tabIndex?: number;
     state?: any;
     tabState?: any;
+    // CSV upload fields
+    csvVersion?: CSVFileVersion;
+    fileName?: string;
+    uploadedBy?: string;
   };
 }
 

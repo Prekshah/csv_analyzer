@@ -46,6 +46,11 @@ import CampaignManager from './components/CampaignManager';
 import CSVDownloadButton from './components/CSVDownloadButton';
 import CSVVersionManager from './components/CSVVersionManager';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { 
+  initializeEnhancedCollaboration, 
+  switchCollaborationCSVVersion,
+  subscribeToCollaborationCSVUploads 
+} from './utils/enhancedCollaboration';
 import { Campaign, CSVAnalysis } from './types/Campaign';
 import {
   createCampaign as firestoreCreateCampaign,
@@ -1015,6 +1020,12 @@ function AuthenticatedApp() {
     selectedMetric: string;
     variance: string;
   } | null>(null);
+  const [collaborationNotifications, setCollaborationNotifications] = useState<Array<{
+    id: string;
+    message: string;
+    type: 'csv_upload' | 'field_update' | 'user_join';
+    timestamp: number;
+  }>>([]);
   
 
 
@@ -1039,6 +1050,33 @@ function AuthenticatedApp() {
       // This effect is mainly for logging and potential future enhancements
     }
   }, [currentCampaign?.activeCsvVersionId]);
+
+  // Subscribe to collaboration notifications
+  useEffect(() => {
+    if (!currentCampaign?.id) return;
+
+    const unsubscribeCSVUploads = subscribeToCollaborationCSVUploads((csvVersion, uploadedBy) => {
+      if (user?.uid !== uploadedBy) {
+        const notification = {
+          id: `csv_${Date.now()}`,
+          message: `📊 ${uploadedBy} uploaded a new CSV: ${csvVersion.fileName}`,
+          type: 'csv_upload' as const,
+          timestamp: Date.now()
+        };
+        
+        setCollaborationNotifications(prev => [notification, ...prev.slice(0, 4)]);
+        
+        // Auto-remove after 8 seconds
+        setTimeout(() => {
+          setCollaborationNotifications(prev => prev.filter(n => n.id !== notification.id));
+        }, 8000);
+      }
+    });
+
+    return () => {
+      unsubscribeCSVUploads();
+    };
+  }, [currentCampaign?.id, user?.uid]);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
@@ -1067,6 +1105,11 @@ function AuthenticatedApp() {
     setView('analysis');
     
     console.log(`Selecting campaign: ${campaign.id}, CSV versions: ${Object.keys(campaign.csvVersions || {}).length}`);
+    
+    // Initialize real-time collaboration for this campaign
+    if (campaign.activeCsvVersionId) {
+      initializeEnhancedCollaboration(campaign.id, campaign.activeCsvVersionId);
+    }
     
     // Load CSV data based on new multi-CSV structure with strict isolation
     if (campaign.activeCsvVersionId && campaign.csvVersions?.[campaign.activeCsvVersionId]) {
@@ -1256,6 +1299,9 @@ function AuthenticatedApp() {
           ...currentCampaign,
           activeCsvVersionId: csvVersionId
         });
+        
+        // Notify collaborators of CSV version switch
+        switchCollaborationCSVVersion(csvVersionId);
         
         console.log(`Switched to CSV version: ${csvVersionId} with content hash: ${contentHash} - strict state isolation applied`);
       }
@@ -2842,8 +2888,38 @@ function AuthenticatedApp() {
               powerAnalysisValues={powerAnalysisValues}
             />}
           </Box>
-      )}
-    </Container>
+              )}
+
+        {/* Collaboration Notifications */}
+        {collaborationNotifications.map((notification, index) => (
+          <Box
+            key={notification.id}
+            sx={{
+              position: 'fixed',
+              top: 80 + (index * 60),
+              right: 20,
+              zIndex: 9999,
+              maxWidth: 400,
+              minWidth: 300
+            }}
+          >
+            <Alert 
+              severity="info" 
+              onClose={() => setCollaborationNotifications(prev => 
+                prev.filter(n => n.id !== notification.id)
+              )}
+              sx={{ 
+                boxShadow: 3,
+                '& .MuiAlert-message': {
+                  fontSize: '0.9rem'
+                }
+              }}
+            >
+              {notification.message}
+            </Alert>
+          </Box>
+        ))}
+      </Container>
     </Box>
   );
 }
