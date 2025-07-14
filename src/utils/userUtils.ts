@@ -1,6 +1,6 @@
 // User identification utilities for collaborative editing
 
-import { collection, query, where, getDocs, doc, setDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
 export const generateUserId = (): string => {
@@ -183,8 +183,13 @@ export async function convertPendingUser(email: string, realUid: string, display
       
       await setDoc(realUserDocRef, userData);
       
-      // TODO: Update all campaigns that reference the pending UID to use the real UID
-      // This would require updating the collaborators object in all campaigns
+      // Update all campaigns that reference the pending UID to use the real UID
+      await updateCampaignsForConvertedUser(pendingUid, realUid, {
+        uid: realUid,
+        email: email,
+        displayName: displayName || email.split('@')[0],
+        photoURL: photoURL
+      });
       
       console.log(`[userUtils] Successfully converted pending user to real user: ${realUid}`);
     } else {
@@ -193,6 +198,148 @@ export async function convertPendingUser(email: string, realUid: string, display
     
   } catch (error) {
     console.error(`[userUtils] Error converting pending user:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Updates all campaigns that reference a pending user to use the real user UID
+ */
+async function updateCampaignsForConvertedUser(
+  pendingUid: string, 
+  realUid: string, 
+  userInfo: { uid: string; email: string; displayName: string; photoURL?: string }
+): Promise<void> {
+  console.log(`[userUtils] Updating campaigns for converted user: ${pendingUid} -> ${realUid}`);
+  
+  try {
+    // Query all campaigns that have the pending user in collaboratorIds
+    const campaignsRef = collection(db, 'campaigns');
+    const campaignsQuery = query(campaignsRef, where('collaboratorIds', 'array-contains', pendingUid));
+    const campaignsSnapshot = await getDocs(campaignsQuery);
+    
+    console.log(`[userUtils] Found ${campaignsSnapshot.size} campaigns to update`);
+    
+    // Update each campaign
+    for (const campaignDoc of campaignsSnapshot.docs) {
+      const campaignData = campaignDoc.data();
+      const collaborators = campaignData.collaborators || {};
+      
+      if (collaborators[pendingUid]) {
+        console.log(`[userUtils] Updating campaign ${campaignDoc.id}`);
+        
+        // Get the pending collaborator data
+        const pendingCollaborator = collaborators[pendingUid];
+        
+        // Create new collaborator entry with real UID
+        const newCollaborators = { ...collaborators };
+        delete newCollaborators[pendingUid]; // Remove pending entry
+        
+        newCollaborators[realUid] = {
+          ...pendingCollaborator,
+          user: {
+            uid: userInfo.uid,
+            email: userInfo.email,
+            displayName: userInfo.displayName,
+            ...(userInfo.photoURL && { photoURL: userInfo.photoURL })
+          }
+        };
+        
+        // Update collaboratorIds array
+        const collaboratorIds = (campaignData.collaboratorIds || [])
+          .filter((id: string) => id !== pendingUid)
+          .concat(realUid);
+        
+        // Update the campaign document
+        await updateDoc(doc(db, 'campaigns', campaignDoc.id), {
+          collaborators: newCollaborators,
+          collaboratorIds: collaboratorIds
+        });
+        
+        console.log(`[userUtils] Successfully updated campaign ${campaignDoc.id}`);
+      }
+    }
+    
+    console.log(`[userUtils] Finished updating campaigns for converted user`);
+    
+  } catch (error) {
+    console.error(`[userUtils] Error updating campaigns for converted user:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Automated cleanup function to fix existing pending users who have already signed in
+ * Includes smart checks to avoid unnecessary work and throttling
+ */
+export async function fixExistingPendingUsers(force: boolean = false): Promise<boolean> {
+  // Throttle cleanup to run at most once every 5 minutes
+  const lastCleanupKey = 'lastPendingUserCleanup';
+  const lastCleanup = localStorage.getItem(lastCleanupKey);
+  const now = Date.now();
+  const fiveMinutes = 5 * 60 * 1000;
+  
+  if (!force && lastCleanup && (now - parseInt(lastCleanup)) < fiveMinutes) {
+    console.log(`[userUtils] Skipping cleanup - last run was ${Math.round((now - parseInt(lastCleanup)) / 1000)}s ago`);
+    return false;
+  }
+  
+  console.log(`[userUtils] Starting automated cleanup of existing pending users`);
+  
+  try {
+    // Get all users
+    const usersRef = collection(db, 'users');
+    const usersSnapshot = await getDocs(usersRef);
+    
+    const pendingUsers: { [email: string]: string } = {};
+    const realUsers: { [email: string]: any } = {};
+    
+    // Categorize users
+    usersSnapshot.docs.forEach(doc => {
+      const userData = doc.data();
+      if (userData.isPending) {
+        pendingUsers[userData.email] = userData.uid;
+      } else {
+        realUsers[userData.email] = userData;
+      }
+    });
+    
+    console.log(`[userUtils] Found ${Object.keys(pendingUsers).length} pending users and ${Object.keys(realUsers).length} real users`);
+    
+    // Check if there are any pending users that need fixing
+    const usersToFix = Object.entries(pendingUsers).filter(([email]) => realUsers[email]);
+    
+    if (usersToFix.length === 0) {
+      console.log(`[userUtils] No pending users need fixing - skipping cleanup`);
+      return false;
+    }
+    
+    console.log(`[userUtils] Found ${usersToFix.length} pending users that need fixing`);
+    
+    // For each pending user, check if there's a real user with the same email
+    for (const [email, pendingUid] of usersToFix) {
+      const realUser = realUsers[email];
+      console.log(`[userUtils] Found real user for pending ${email}: ${pendingUid} -> ${realUser.uid}`);
+      
+      // Update campaigns for this converted user
+      await updateCampaignsForConvertedUser(pendingUid, realUser.uid, {
+        uid: realUser.uid,
+        email: realUser.email,
+        displayName: realUser.displayName,
+        photoURL: realUser.photoURL
+      });
+      
+      console.log(`[userUtils] Fixed campaigns for ${email}`);
+    }
+    
+    console.log(`[userUtils] Finished automated cleanup - fixed ${usersToFix.length} users`);
+    
+    // Update last cleanup timestamp
+    localStorage.setItem(lastCleanupKey, now.toString());
+    return true;
+    
+  } catch (error) {
+    console.error(`[userUtils] Error in automated cleanup:`, error);
     throw error;
   }
 }

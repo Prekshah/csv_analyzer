@@ -34,8 +34,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       await new Promise(resolve => setTimeout(resolve, 100));
       
       try {
-        // Check if there's a pending user for this email
-        const { convertPendingUser } = await import('../utils/userUtils');
+        // Check if there's a pending user for this email and fix campaigns
+        const { convertPendingUser, fixExistingPendingUsers } = await import('../utils/userUtils');
         if (firebaseUser.email) {
           await convertPendingUser(
             firebaseUser.email,
@@ -44,6 +44,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             firebaseUser.photoURL || undefined
           );
         }
+        
+        // Run automated cleanup in background (don't await to avoid blocking)
+        fixExistingPendingUsers().catch(error => {
+          console.warn('[AuthContext] Background pending user cleanup failed:', error);
+        });
         
         const userData: any = {
           uid: firebaseUser.uid,

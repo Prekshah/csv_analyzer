@@ -48,7 +48,7 @@ import {
   subscribeToUserCampaigns
 } from '../utils/firestoreCampaignService';
 import { validateCampaignName } from '../utils/storage';
-import { getUidByEmail } from '../utils/userUtils';
+import { getUidByEmail, fixExistingPendingUsers } from '../utils/userUtils';
 import { serverTimestamp, Timestamp } from 'firebase/firestore';
 
 interface CampaignManagerProps {
@@ -101,6 +101,26 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
       isDisabled: !collaboratorEmail.trim() || loading
     });
   }, [collaboratorEmail, loading]);
+
+  // Automated pending user cleanup when campaigns are loaded
+  useEffect(() => {
+    if (campaigns.length > 0 && user) {
+      // Run cleanup in background after campaigns are loaded
+      const runCleanup = async () => {
+        try {
+          console.log('[CampaignManager] Running automated pending user cleanup');
+          await fixExistingPendingUsers();
+          console.log('[CampaignManager] Automated cleanup completed');
+        } catch (error) {
+          console.warn('[CampaignManager] Automated cleanup failed:', error);
+        }
+      };
+      
+      // Delay the cleanup to avoid blocking the UI
+      const timeoutId = setTimeout(runCleanup, 2000);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [campaigns.length, user]);
 
   // Helper to safely convert date fields to timestamps
   const getTime = (value: any): number => {
@@ -533,6 +553,23 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
 
   const getValidRole = (role: any): CollaboratorRole => validRoles.includes(role as CollaboratorRole) ? (role as CollaboratorRole) : 'viewer';
 
+  const handleFixPendingUsers = async () => {
+    try {
+      setLoading(true);
+      const fixed = await fixExistingPendingUsers(true); // Force manual cleanup
+      if (fixed) {
+        setSuccessMessage('Successfully fixed pending users! Please refresh to see updates.');
+      } else {
+        setSuccessMessage('No pending users needed fixing.');
+      }
+    } catch (error) {
+      console.error('Error fixing pending users:', error);
+      setShareError('Failed to fix pending users: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (loading) {
     <Box display="flex" flexDirection="column" alignItems="center" justifyContent="center" minHeight={200}>
       <CircularProgress sx={{ mb: 2 }} />
@@ -929,6 +966,17 @@ const CampaignManager: React.FC<CampaignManagerProps> = ({ onCampaignSelect, onN
               title={`Button disabled: ${!collaboratorEmail.trim() ? 'Email is empty' : loading ? 'Loading...' : 'Ready to add'}`}
             >
               Add Collaborator
+            </Button>
+            <Button
+              variant="text"
+              color="secondary"
+              size="small"
+              onClick={handleFixPendingUsers}
+              disabled={loading}
+              sx={{ mt: 1, fontSize: '0.75rem' }}
+              title="Manually fix any pending users (runs automatically in background)"
+            >
+              Manual Fix Pending Users
             </Button>
             {shareError && <Alert severity="error" sx={{ mt: 2 }}>{shareError}</Alert>}
           </Box>
